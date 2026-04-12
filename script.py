@@ -5,6 +5,7 @@ import smtplib
 import sqlite3
 import time
 import requests
+import os
 from email.mime.text import MIMEText
 from newspaper import Article
 from groq import Groq
@@ -13,13 +14,12 @@ from groq import Groq
 with open("config.json") as f:
     config = json.load(f)
 
-API_KEY = config["groq_api_key"]
-EMAIL = config["email"]
 SITES = config["sites"]
 FILTERS = config["filters"]
 
 KEYWORD = FILTERS.get("keyword", "solar").lower()
 
+# -------- STATE NORMALIZATION --------
 STATE_ALIASES = {
     "jharkhand": ["jharkhand"],
     "bihar": ["bihar"],
@@ -31,8 +31,22 @@ STATE_ALIASES = {
     "uttar pradesh": ["uttar pradesh", "up"]
 }
 
-print("\n[START]", time.ctime())
-print("[CONFIG] Keyword:", KEYWORD)
+ALLOWED_STATES = list(STATE_ALIASES.keys())
+
+print("\n[INIT] Keyword:", KEYWORD)
+print("[INIT] Allowed states:", ALLOWED_STATES)
+
+# ---------------- ENV VARIABLES ----------------
+API_KEY = os.getenv("GROQ_API_KEY")
+
+EMAIL = {
+    "sender": os.getenv("EMAIL_SENDER"),
+    "password": os.getenv("EMAIL_PASSWORD"),
+    "receiver": os.getenv("EMAIL_RECEIVER")
+}
+
+if not API_KEY:
+    raise Exception("Missing GROQ_API_KEY")
 
 # ---------------- INIT CLIENT ----------------
 client = Groq(api_key=API_KEY)
@@ -72,7 +86,7 @@ def send_email(subject, body):
     except Exception as e:
         print("[EMAIL ERROR]", e)
 
-# ---------------- STATE FILTER ----------------
+# ---------------- STATE DETECTION ----------------
 def find_state(text):
     text = text.lower()
 
@@ -80,24 +94,27 @@ def find_state(text):
         return None
 
     for state, aliases in STATE_ALIASES.items():
-        for alias in aliases:
-            if alias in text:
+        for name in aliases:
+            if name in text:
                 return state
 
     return None
 
-# ---------------- LLM CHECK ----------------
-def llm_check(title, content):
+# ---------------- LLM FALLBACK ----------------
+def llm_detect(title, content):
     try:
         prompt = f"""
 Answer ONLY YES or NO.
 
 Return YES only if:
-- Article is about solar energy
+- Article is about SOLAR energy
 - AND mentions one of these states:
 Jharkhand, Bihar, Odisha, Assam, Chhattisgarh, Madhya Pradesh, Andhra Pradesh, Uttar Pradesh
 
-Otherwise return NO.
+Rules:
+- If only "India" → NO
+- If other states → NO
+- If no state → NO
 
 Article:
 {title}
@@ -122,8 +139,11 @@ Article:
 def summarize(title, content):
     try:
         prompt = f"""
-Summarize in 3 bullet points:
+Summarize in:
+- 3 bullet points
+- 1 line why it matters
 
+Article:
 {title}
 {content[:2000]}
 """
@@ -139,29 +159,31 @@ Summarize in 3 bullet points:
         print("[SUMMARY ERROR]", e)
         return "Summary unavailable"
 
-# ---------------- PROCESS ----------------
+# ---------------- PROCESS SITE ----------------
 def process_site(site):
     print(f"\n===== {site['name']} =====")
 
     try:
-        r = requests.get(site["rss"], headers={"User-Agent": "Mozilla/5.0"})
+        r = requests.get(site["rss"], headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         feed = feedparser.parse(r.content)
         print("[FEED] Entries:", len(feed.entries))
     except Exception as e:
         print("[FEED ERROR]", e)
         return
 
-    for entry in feed.entries:
+    for i, entry in enumerate(feed.entries[:30], 1):
+        print(f"\n--- Article {i} ---")
+
         title = entry.get("title", "")
         url = entry.get("link", "")
         desc = entry.get("summary", "")
 
-        print("\n[TITLE]", title)
+        print("[TITLE]", title)
 
         if not is_new(url):
             continue
 
-        # STEP 1: Quick filter
+        # STEP 1
         state = find_state(title + " " + desc)
 
         if state:
@@ -169,7 +191,6 @@ def process_site(site):
             print("[FAST MATCH]", state)
 
         else:
-            # STEP 2: Scrape
             try:
                 article = Article(url)
                 article.download()
@@ -183,19 +204,18 @@ def process_site(site):
             state = find_state(content)
 
             if not state:
-                # STEP 3: LLM fallback
-                if not llm_check(title, content):
+                if not llm_detect(title, content):
                     print("[SKIP] Not relevant")
                     continue
 
                 print("[SKIP] No valid state → ignore")
                 continue
 
-        # STEP 4: Summary
+        # SUMMARY
         summary = summarize(title, content)
 
-        # STEP 5: Email
-        body = f"""
+        # EMAIL
+        message = f"""
 Title: {title}
 
 State: {state}
@@ -206,13 +226,13 @@ Summary:
 Link: {url}
 """
 
-        send_email(f"Solar Alert - {state}", body)
+        send_email(f"Solar Alert - {state}", message)
 
 # ---------------- MAIN ----------------
 if __name__ == "__main__":
-    print("[SYSTEM] Running one cycle")
+    print("\n[SYSTEM] Running one cycle\n")
 
     for site in SITES:
         process_site(site)
 
-    print("[SYSTEM] Finished\n")
+    print("\n[SYSTEM] Done\n")
