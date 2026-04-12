@@ -1,16 +1,4 @@
 {
-  "groq_api_key": "YOUR_GROQ_API_KEY",
-
-  "email": {
-    "sender": "your_email@gmail.com",
-    "password": "your_app_password",
-    "receiver": "your_email@gmail.com"
-  },
-
-  "filters": {
-    "keyword": "solar"
-  },
-
   "sites": [
     {
       "name": "Mercom",
@@ -20,5 +8,18 @@
       "name": "JMK",
       "rss": "https://jmkresearch.com/feed/"
     }
-  ]
+  ],
+  "filters": {
+    "keyword": "solar",
+    "allowed_states": [
+      "Jharkhand",
+      "Bihar",
+      "Odisha",
+      "Assam",
+      "Chhattisgarh",
+      "Madhya Pradesh",
+      "Andhra Pradesh",
+      "Uttar Pradesh"
+    ]
+  }
 }
