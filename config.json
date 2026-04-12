@@ -1,0 +1,24 @@
+{
+  "groq_api_key": "YOUR_GROQ_API_KEY",
+
+  "email": {
+    "sender": "your_email@gmail.com",
+    "password": "your_app_password",
+    "receiver": "your_email@gmail.com"
+  },
+
+  "filters": {
+    "keyword": "solar"
+  },
+
+  "sites": [
+    {
+      "name": "Mercom",
+      "rss": "https://www.mercomindia.com/feed/"
+    },
+    {
+      "name": "JMK",
+      "rss": "https://jmkresearch.com/feed/"
+    }
+  ]
+}
