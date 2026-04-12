@@ -41,6 +41,18 @@ EMAIL_TO = os.getenv("EMAIL_RECEIVER")
 if not GROQ_API_KEY or not RESEND_API:
     raise Exception("Missing API keys")
 
+# ✅ EMAIL PARSING FIX
+if not EMAIL_TO:
+    raise Exception("EMAIL_RECEIVER not set")
+
+EMAIL_TO = [e.strip() for e in EMAIL_TO.split(",")]
+
+PRIMARY_EMAIL = EMAIL_TO[0]
+BCC_EMAILS = EMAIL_TO[1:]
+
+print("[EMAIL INIT] TO:", PRIMARY_EMAIL)
+print("[EMAIL INIT] BCC:", BCC_EMAILS)
+
 # ---------------- INIT CLIENT ----------------
 client = Groq(api_key=GROQ_API_KEY)
 
@@ -70,6 +82,16 @@ def is_new(url):
 def send_email(subject, body):
     print("[EMAIL] Sending via Resend...")
 
+    payload = {
+        "from": "onboarding@resend.dev",
+        "to": [PRIMARY_EMAIL],
+        "subject": subject,
+        "text": body
+    }
+
+    if BCC_EMAILS:
+        payload["bcc"] = BCC_EMAILS
+
     try:
         response = requests.post(
             "https://api.resend.com/emails",
@@ -77,12 +99,7 @@ def send_email(subject, body):
                 "Authorization": f"Bearer {RESEND_API}",
                 "Content-Type": "application/json"
             },
-            json={
-                "from": "onboarding@resend.dev",
-                "to": [EMAIL_TO],
-                "subject": subject,
-                "text": body
-            }
+            json=payload
         )
 
         print("[EMAIL STATUS]", response.status_code)
