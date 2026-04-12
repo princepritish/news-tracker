@@ -23,9 +23,9 @@ STATE_ALIASES = {
     "odisha": ["odisha", "orissa"],
     "assam": ["assam"],
     "chhattisgarh": ["chhattisgarh", "chattisgarh"],
-    "madhya pradesh": ["madhya pradesh", "mp"],
-    "andhra pradesh": ["andhra pradesh", "ap"],
-    "uttar pradesh": ["uttar pradesh", "up"]
+    "madhya pradesh": ["madhya pradesh"],
+    "andhra pradesh": ["andhra pradesh"],
+    "uttar pradesh": ["uttar pradesh"]
 }
 
 print("\n[INIT] Keyword:", KEYWORD)
