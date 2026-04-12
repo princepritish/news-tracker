@@ -28,25 +28,21 @@ STATE_ALIASES = {
     "uttar pradesh": ["uttar pradesh", "up"]
 }
 
-ALLOWED_STATES = list(STATE_ALIASES.keys())
-
 print("\n[INIT] Keyword:", KEYWORD)
-print("[INIT] Allowed states:", ALLOWED_STATES)
 
 # ---------------- ENV VARIABLES ----------------
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-RESEND_API = os.getenv("RESEND_API")
+BREVO_API_KEY = os.getenv("BREVO_API_KEY")
 EMAIL_TO = os.getenv("EMAIL_RECEIVER")
 
-if not GROQ_API_KEY or not RESEND_API:
+if not GROQ_API_KEY or not BREVO_API_KEY:
     raise Exception("Missing API keys")
 
-# ✅ EMAIL PARSING FIX
 if not EMAIL_TO:
     raise Exception("EMAIL_RECEIVER not set")
 
+# -------- EMAIL PARSE --------
 EMAIL_TO = [e.strip() for e in EMAIL_TO.split(",")]
-
 PRIMARY_EMAIL = EMAIL_TO[0]
 BCC_EMAILS = EMAIL_TO[1:]
 
@@ -78,32 +74,36 @@ def is_new(url):
     print("[DB] Stored")
     return True
 
-# ---------------- RESEND EMAIL ----------------
+# ---------------- BREVO EMAIL ----------------
 def send_email(subject, body):
-    print("[EMAIL] Sending via Resend...")
+    print("[EMAIL] Sending via Brevo...")
+
+    url = "https://api.brevo.com/v3/smtp/email"
+
+    headers = {
+        "accept": "application/json",
+        "api-key": BREVO_API_KEY,
+        "content-type": "application/json"
+    }
 
     payload = {
-        "from": "onboarding@resend.dev",
-        "to": [PRIMARY_EMAIL],
+        "sender": {
+            "name": "Solar Alerts",
+            "email": "princepritish26@gmail.com"   # 🔴 CHANGE THIS to your verified sender
+        },
+        "to": [{"email": PRIMARY_EMAIL}],
         "subject": subject,
-        "text": body
+        "textContent": body
     }
 
     if BCC_EMAILS:
-        payload["bcc"] = BCC_EMAILS
+        payload["bcc"] = [{"email": e} for e in BCC_EMAILS]
 
     try:
-        response = requests.post(
-            "https://api.resend.com/emails",
-            headers={
-                "Authorization": f"Bearer {RESEND_API}",
-                "Content-Type": "application/json"
-            },
-            json=payload
-        )
+        res = requests.post(url, json=payload, headers=headers)
 
-        print("[EMAIL STATUS]", response.status_code)
-        print("[EMAIL RESPONSE]", response.text)
+        print("[EMAIL STATUS]", res.status_code)
+        print("[EMAIL RESPONSE]", res.text)
 
     except Exception as e:
         print("[EMAIL ERROR]", e)
@@ -204,7 +204,6 @@ def process_site(site):
         if not is_new(url):
             continue
 
-        # STEP 1
         state = find_state(title + " " + desc)
 
         if state:
@@ -232,10 +231,8 @@ def process_site(site):
                 print("[SKIP] No valid state → ignore")
                 continue
 
-        # SUMMARY
         summary = summarize(title, content)
 
-        # EMAIL
         body = f"""
 Title: {title}
 
