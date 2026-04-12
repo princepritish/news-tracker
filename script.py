@@ -35,10 +35,10 @@ print("[INIT] Allowed states:", ALLOWED_STATES)
 
 # ---------------- ENV VARIABLES ----------------
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+RESEND_API = os.getenv("RESEND_API")
 EMAIL_TO = os.getenv("EMAIL_RECEIVER")
 
-if not GROQ_API_KEY or not RESEND_API_KEY:
+if not GROQ_API_KEY or not RESEND_API:
     raise Exception("Missing API keys")
 
 # ---------------- INIT CLIENT ----------------
@@ -74,7 +74,7 @@ def send_email(subject, body):
         response = requests.post(
             "https://api.resend.com/emails",
             headers={
-                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Authorization": f"Bearer {RESEND_API}",
                 "Content-Type": "application/json"
             },
             json={
