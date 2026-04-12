@@ -1,12 +1,9 @@
 import feedparser
 import hashlib
 import json
-import smtplib
 import sqlite3
-import time
 import requests
 import os
-from email.mime.text import MIMEText
 from newspaper import Article
 from groq import Groq
 
@@ -37,25 +34,25 @@ print("\n[INIT] Keyword:", KEYWORD)
 print("[INIT] Allowed states:", ALLOWED_STATES)
 
 # ---------------- ENV VARIABLES ----------------
-API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+EMAIL_TO = os.getenv("EMAIL_RECEIVER")
 
-EMAIL = {
-    "sender": os.getenv("EMAIL_SENDER"),
-    "password": os.getenv("EMAIL_PASSWORD"),
-    "receiver": os.getenv("EMAIL_RECEIVER")
-}
-
-if not API_KEY:
-    raise Exception("Missing GROQ_API_KEY")
+if not GROQ_API_KEY or not RESEND_API_KEY:
+    raise Exception("Missing API keys")
 
 # ---------------- INIT CLIENT ----------------
-client = Groq(api_key=API_KEY)
+client = Groq(api_key=GROQ_API_KEY)
 
 # ---------------- DATABASE ----------------
-conn = sqlite3.connect("seen.db")
+DB_PATH = "/data/seen.db" if os.path.exists("/data") else "seen.db"
+
+conn = sqlite3.connect(DB_PATH)
 c = conn.cursor()
 c.execute("CREATE TABLE IF NOT EXISTS articles (hash TEXT PRIMARY KEY)")
 conn.commit()
+
+print("[DB] Using:", DB_PATH)
 
 def is_new(url):
     h = hashlib.md5(url.encode()).hexdigest()
@@ -69,19 +66,27 @@ def is_new(url):
     print("[DB] Stored")
     return True
 
-# ---------------- EMAIL ----------------
+# ---------------- RESEND EMAIL ----------------
 def send_email(subject, body):
+    print("[EMAIL] Sending via Resend...")
+
     try:
-        msg = MIMEText(body)
-        msg["Subject"] = subject
-        msg["From"] = EMAIL["sender"]
-        msg["To"] = EMAIL["receiver"]
+        response = requests.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "from": "onboarding@resend.dev",
+                "to": [EMAIL_TO],
+                "subject": subject,
+                "text": body
+            }
+        )
 
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(EMAIL["sender"], EMAIL["password"])
-            server.send_message(msg)
-
-        print("[EMAIL] Sent")
+        print("[EMAIL STATUS]", response.status_code)
+        print("[EMAIL RESPONSE]", response.text)
 
     except Exception as e:
         print("[EMAIL ERROR]", e)
@@ -100,8 +105,10 @@ def find_state(text):
 
     return None
 
-# ---------------- LLM FALLBACK ----------------
+# ---------------- LLM CHECK ----------------
 def llm_detect(title, content):
+    print("[LLM] Checking...")
+
     try:
         prompt = f"""
 Answer ONLY YES or NO.
@@ -110,11 +117,6 @@ Return YES only if:
 - Article is about SOLAR energy
 - AND mentions one of these states:
 Jharkhand, Bihar, Odisha, Assam, Chhattisgarh, Madhya Pradesh, Andhra Pradesh, Uttar Pradesh
-
-Rules:
-- If only "India" → NO
-- If other states → NO
-- If no state → NO
 
 Article:
 {title}
@@ -137,6 +139,8 @@ Article:
 
 # ---------------- SUMMARY ----------------
 def summarize(title, content):
+    print("[SUMMARY] Generating...")
+
     try:
         prompt = f"""
 Summarize in:
@@ -187,16 +191,16 @@ def process_site(site):
         state = find_state(title + " " + desc)
 
         if state:
-            content = desc
             print("[FAST MATCH]", state)
+            content = desc
 
         else:
+            print("[SCRAPE] Fetching full article...")
             try:
                 article = Article(url)
                 article.download()
                 article.parse()
                 content = article.text
-                print("[SCRAPE] Done")
             except Exception as e:
                 print("[SCRAPE ERROR]", e)
                 continue
@@ -215,7 +219,7 @@ def process_site(site):
         summary = summarize(title, content)
 
         # EMAIL
-        message = f"""
+        body = f"""
 Title: {title}
 
 State: {state}
@@ -226,7 +230,7 @@ Summary:
 Link: {url}
 """
 
-        send_email(f"Solar Alert - {state}", message)
+        send_email(f"Solar Alert - {state}", body)
 
 # ---------------- MAIN ----------------
 if __name__ == "__main__":
