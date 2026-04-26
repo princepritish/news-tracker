@@ -14,7 +14,7 @@ with open("config.json") as f:
 SITES = config["sites"]
 FILTERS = config["filters"]
 
-KEYWORD = FILTERS.get("keyword", "solar").lower()
+KEYWORDS = [k.lower() for k in FILTERS.get("keywords", ["solar", "battery energy storage system", "bess"])]
 
 # -------- STATE NORMALIZATION --------
 STATE_ALIASES = {
@@ -28,25 +28,28 @@ STATE_ALIASES = {
     "uttar pradesh": ["uttar pradesh"]
 }
 
-print("\n[INIT] Keyword:", KEYWORD)
+print("\n[INIT] Keywords:", KEYWORDS)
 
 # ---------------- ENV VARIABLES ----------------
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 BREVO_API_KEY = os.getenv("BREVO_API_KEY")
-EMAIL_TO = os.getenv("EMAIL_RECEIVER")
+EMAIL_TO = os.getenv("EMAIL_TO")
+EMAIL_BCC = os.getenv("EMAIL_BCC")
 
 if not GROQ_API_KEY or not BREVO_API_KEY:
     raise Exception("Missing API keys")
 
 if not EMAIL_TO:
-    raise Exception("EMAIL_RECEIVER not set")
+    raise Exception("EMAIL_TO not set")
 
 # -------- EMAIL PARSE --------
-EMAIL_TO = [e.strip() for e in EMAIL_TO.split(",")]
-PRIMARY_EMAIL = EMAIL_TO[0]
-BCC_EMAILS = EMAIL_TO[1:]
+TO_EMAILS = [e.strip() for e in EMAIL_TO.split(",") if e.strip()]
+if len(TO_EMAILS) < 2:
+    raise Exception("EMAIL_TO must contain at least 2 comma-separated emails")
 
-print("[EMAIL INIT] TO:", PRIMARY_EMAIL)
+BCC_EMAILS = [EMAIL_BCC.strip()] if EMAIL_BCC and EMAIL_BCC.strip() else []
+
+print("[EMAIL INIT] TO:", TO_EMAILS)
 print("[EMAIL INIT] BCC:", BCC_EMAILS)
 
 # ---------------- INIT CLIENT ----------------
@@ -91,7 +94,7 @@ def send_email(subject, body):
             "name": "Solar Alerts",
             "email": "princepritish26@gmail.com"   # 🔴 CHANGE THIS to your verified sender
         },
-        "to": [{"email": PRIMARY_EMAIL}],
+        "to": [{"email": e} for e in TO_EMAILS],
         "subject": subject,
         "textContent": body
     }
@@ -109,10 +112,15 @@ def send_email(subject, body):
         print("[EMAIL ERROR]", e)
 
 # ---------------- STATE DETECTION ----------------
+def matches_topic(text):
+    lower_text = text.lower()
+    return any(keyword in lower_text for keyword in KEYWORDS)
+
+
 def find_state(text):
     text = text.lower()
 
-    if KEYWORD not in text:
+    if not matches_topic(text):
         return None
 
     for state, aliases in STATE_ALIASES.items():
@@ -131,7 +139,7 @@ def llm_detect(title, content):
 Answer ONLY YES or NO.
 
 Return YES only if:
-- Article is about SOLAR energy
+- Article is about SOLAR energy OR battery energy storage systems (BESS)
 - AND mentions one of these states:
 Jharkhand, Bihar, Odisha, Assam, Chhattisgarh, Madhya Pradesh, Andhra Pradesh, Uttar Pradesh
 
@@ -244,7 +252,7 @@ Summary:
 Link: {url}
 """
 
-        send_email(f"Solar Alert - {state}", body)
+        send_email(f"Energy Alert - {state}", body)
 
 # ---------------- MAIN ----------------
 if __name__ == "__main__":

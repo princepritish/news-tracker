@@ -10,7 +10,11 @@
     }
   ],
   "filters": {
-    "keyword": "solar",
+    "keywords": [
+      "solar",
+      "battery energy storage system",
+      "bess"
+    ],
     "allowed_states": [
       "Jharkhand",
       "Bihar",
