@@ -7,13 +7,229 @@
     {
       "name": "JMK",
       "rss": "https://jmkresearch.com/feed/"
+    },
+    {
+      "name": "EQ – The Leading Solar Magazine",
+      "rss": "https://www.eqmagpro.com/feed/",
+      "verified": false
+    },
+    {
+      "name": "SolarQuarter",
+      "rss": "https://solarquarter.com/feed/",
+      "verified": false
+    },
+    {
+      "name": "Saur International Energy",
+      "rss": "https://www.saurenergy.com/feed/",
+      "verified": false
+    },
+    {
+      "name": "pv magazine India",
+      "rss": "https://www.pv-magazine-india.com/feed/",
+      "verified": false
+    },
+    {
+      "name": "Renewable Watch",
+      "rss": "https://renewablewatch.in/feed/",
+      "verified": false
+    },
+    {
+      "name": "Energetica India",
+      "rss": "https://www.energetica-india.net/feed/",
+      "verified": false
+    },
+    {
+      "name": "Renewable Affairs",
+      "rss": "https://renewableaffairs.com/feed/",
+      "verified": false
+    },
+    {
+      "name": "Renewable Mirror",
+      "rss": "https://www.renewablemirror.com/feed/",
+      "verified": false
+    },
+    {
+      "name": "Energy Next",
+      "rss": "https://www.energynext.com/feed/",
+      "verified": false
+    },
+    {
+      "name": "Akshay Urja",
+      "rss": "https://akshayurja.gov.in/feed/",
+      "verified": false
+    },
+    {
+      "name": "Solar Power World",
+      "rss": "https://www.solarpowerworldonline.com/feed/",
+      "verified": false
+    },
+    {
+      "name": "Renewable Energy Magazine",
+      "rss": "https://www.renewableenergymagazine.com/feed/",
+      "verified": false
+    },
+    {
+      "name": "Solar Magazine",
+      "rss": "https://solarmagazine.com/feed/",
+      "verified": false
+    },
+    {
+      "name": "Solar Builder Magazine",
+      "rss": "https://solarbuildermag.com/feed/",
+      "verified": false
+    },
+    {
+      "name": "PHOTON International",
+      "rss": "https://www.photon.com/feed/",
+      "verified": false
+    },
+    {
+      "name": "Solar Energy International",
+      "rss": "https://www.solarenergy.org/feed/",
+      "verified": false
+    },
+    {
+      "name": "Renewable Energy World",
+      "rss": "https://www.renewableenergyworld.com/feed/",
+      "verified": false
+    },
+    {
+      "name": "Electrical India",
+      "rss": "https://www.electricalindia.in/feed/",
+      "verified": false
+    },
+    {
+      "name": "Power Line",
+      "rss": "https://powerline.net.in/feed/",
+      "verified": false
+    },
+    {
+      "name": "Electrical Mirror",
+      "rss": "https://electricalmirror.net/feed/",
+      "verified": false
+    },
+    {
+      "name": "Electrical & Power Review",
+      "rss": "https://www.eprmagazine.com/feed/",
+      "verified": false
+    },
+    {
+      "name": "Power Review",
+      "rss": "https://www.powerreviews.com/feed/",
+      "verified": false,
+      "note": "powerreviews.com is PowerReviews, a US product-ratings SaaS vendor - not a power-sector trade magazine. Likely a wrong URL for the intended publication."
+    },
+    {
+      "name": "India Power Monitor",
+      "rss": "https://indiapowermonitor.com/feed/",
+      "verified": false
+    },
+    {
+      "name": "T&D India",
+      "rss": "https://www.tndindia.com/feed/",
+      "verified": false
+    },
+    {
+      "name": "Power Engineering",
+      "rss": "https://powerengineering.co.in/feed/",
+      "verified": false
+    },
+    {
+      "name": "Energy Infra Post",
+      "rss": "https://energyinfrapost.com/feed/",
+      "verified": false,
+      "note": "Source list pointed at an IoT Global Network directory entry, not the publication itself. Using the publication's own domain; verify it is the right outlet."
+    },
+    {
+      "name": "The Battery Magazine",
+      "rss": "https://www.thebatterymagazine.com/feed/",
+      "verified": false
+    },
+    {
+      "name": "India Energy Storage Week publications",
+      "rss": "https://www.energystorageweek.in/feed/",
+      "verified": false
+    },
+    {
+      "name": "Battery Power Online",
+      "rss": "https://www.batterypoweronline.com/feed/",
+      "verified": false
+    },
+    {
+      "name": "Battery Industry",
+      "rss": "https://batteryindustry.net/feed/",
+      "verified": false
+    },
+    {
+      "name": "Energy Storage News",
+      "rss": "https://www.energy-storage.news/feed/",
+      "verified": false
+    },
+    {
+      "name": "PV Tech",
+      "rss": "https://www.pv-tech.org/feed/",
+      "verified": false
+    },
+    {
+      "name": "ESS News",
+      "rss": "https://www.ess-news.com/feed/",
+      "verified": false
+    },
+    {
+      "name": "Construction World",
+      "rss": "https://www.constructionworld.in/feed/",
+      "verified": false
+    },
+    {
+      "name": "Infrastructure Today",
+      "rss": "https://infrastructuretoday.co.in/feed/",
+      "verified": false
+    },
+    {
+      "name": "Indian Infrastructure",
+      "rss": "https://indianinfrastructure.com/feed/",
+      "verified": false
+    },
+    {
+      "name": "Equipment India",
+      "rss": "https://equipmentindia.com/feed/",
+      "verified": false
+    },
+    {
+      "name": "Smart Utilities",
+      "rss": "https://smartutilities.net.in/feed/",
+      "verified": false
+    },
+    {
+      "name": "Energy Manager Magazine",
+      "rss": "https://www.energymanagermagazine.co.uk/feed/",
+      "verified": false
+    },
+    {
+      "name": "Energy Industry Review",
+      "rss": "https://energyindustryreview.com/feed/",
+      "verified": false
+    },
+    {
+      "name": "Sustainability Magazine",
+      "rss": "https://sustainabilitymag.com/feed/",
+      "verified": false
     }
   ],
   "filters": {
     "keywords": [
       "solar",
       "battery energy storage system",
-      "bess"
+      "bess",
+      "solar inverter",
+      "solar mounting structure",
+      "hybrid inverter",
+      "solar battery",
+      "lithium battery",
+      "hot dip structure",
+      "pre gi structure",
+      "zem structure",
+      "galvalume structure"
     ],
     "allowed_states": [
       "Jharkhand",
