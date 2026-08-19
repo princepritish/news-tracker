@@ -85,6 +85,59 @@ print(f"[INIT] {len(SITES)} feeds · {len(KEYWORDS)} keywords · {len(STATE_ALIA
 print(f"[INIT] TO: {TO_EMAILS} · BCC: {BCC_EMAILS}")
 
 
+# ---------------- MODEL RESOLUTION ----------------
+# Model IDs get retired without notice - a hardcoded one silently 404s every call
+# and the whole LLM tier goes dead while the run still "succeeds". So ask the API
+# what exists and pick from a preference list.
+FAST_CANDIDATES = [
+    SUMMARY_MODEL, "llama-3.1-8b-instant", "llama-3.3-70b-versatile",
+    "llama3-8b-8192", "gemma2-9b-it", "mixtral-8x7b-32768",
+]
+STRONG_CANDIDATES = [
+    CLUSTER_MODEL, "llama-3.3-70b-versatile", "llama3-70b-8192",
+    "llama-3.1-8b-instant", "mixtral-8x7b-32768",
+]
+
+
+def resolve_models():
+    """Pick usable model IDs, or (None, None) if the catalogue can't be read."""
+    try:
+        available = {m.id for m in client.models.list().data}
+        print(f"[MODELS] {len(available)} available: {sorted(available)}")
+    except Exception as e:
+        print(f"[MODELS] Could not list models ({e}); using configured defaults")
+        return SUMMARY_MODEL, CLUSTER_MODEL, None
+
+    def pick(candidates):
+        for name in candidates:
+            if name in available:
+                return name
+        return None
+
+    fast = pick(FAST_CANDIDATES)
+    strong = pick(STRONG_CANDIDATES) or fast
+
+    note = None
+    if not fast:
+        note = (
+            "LLM UNAVAILABLE: none of the expected Groq models are accessible on "
+            "this API key, so articles that do not name a state in their text "
+            "could not be classified and story-grouping was skipped. Check "
+            "console.groq.com/docs/models and set SUMMARY_MODEL / CLUSTER_MODEL."
+        )
+        print("[MODELS] WARNING: no usable model found")
+    else:
+        if fast != SUMMARY_MODEL:
+            print(f"[MODELS] SUMMARY_MODEL {SUMMARY_MODEL!r} unavailable -> {fast!r}")
+        if strong != CLUSTER_MODEL:
+            print(f"[MODELS] CLUSTER_MODEL {CLUSTER_MODEL!r} unavailable -> {strong!r}")
+
+    return fast, strong, note
+
+
+FAST_MODEL, STRONG_MODEL, model_warning = resolve_models()
+
+
 # ---------------- RUN STATE ----------------
 class Budget:
     """Hard caps so a bad day cannot run up API usage or run time."""
@@ -108,27 +161,51 @@ feed_errors = []
 # ---------------- DATABASE ----------------
 def open_db():
     """Return (connection, health_note). Never raises - a storage problem must
-    still produce an email, with the problem stated in it."""
-    directory = os.path.dirname(DB_PATH) or "."
-    note = None
+    still produce an email, with the problem stated in it.
 
+    Creating the directory is NOT proof of persistence: on Railway the container
+    runs as root, so os.makedirs("/data") happily succeeds and produces a path
+    that is wiped when the container stops. The only reliable signal is whether a
+    volume is actually mounted there.
+    """
+    directory = os.path.dirname(DB_PATH) or "."
+
+    if os.getenv("ACKNOWLEDGE_EPHEMERAL_DB") == "1":
+        conn = sqlite3.connect(DB_PATH)
+        print(f"[DB] Using: {DB_PATH} (ephemeral, acknowledged)")
+        return conn, None
+
+    warning = None
     if not os.path.isdir(directory):
         try:
             os.makedirs(directory, exist_ok=True)
-            note = f"created {directory}"
-        except Exception as e:
-            fallback = os.path.basename(DB_PATH)
-            print(f"[DB] {directory} unavailable ({e}); using {fallback}")
-            return sqlite3.connect(fallback), (
-                f"WARNING: {directory} is not available, so history was written to "
-                f"'{fallback}' inside the container. On Railway that file is lost "
-                f"when the run ends, which means this news will be sent again "
-                f"tomorrow. Mount a volume at {directory} to fix it."
-            )
+        except Exception:
+            pass
+
+    if not os.path.isdir(directory):
+        fallback = os.path.basename(DB_PATH)
+        print(f"[DB] {directory} unavailable; using {fallback}")
+        return sqlite3.connect(fallback), (
+            f"STORAGE NOT PERSISTENT: {directory} could not be created, so history "
+            f"went to '{fallback}' inside the container and is lost when the run "
+            f"ends. Every run will look like the first run and you will never "
+            f"receive news. Fix: Railway → service → Settings → Volumes → mount a "
+            f"volume at {directory}."
+        )
+
+    if not os.path.ismount(directory):
+        warning = (
+            f"STORAGE NOT PERSISTENT: {directory} exists but no volume is mounted "
+            f"there, so it is wiped when the container restarts. Every run will "
+            f"look like the first run and you will never receive news. "
+            f"Fix: Railway → service → Settings → Volumes → mount a volume at "
+            f"{directory}. (Set ACKNOWLEDGE_EPHEMERAL_DB=1 to silence this.)"
+        )
+        print(f"[DB] WARNING: {directory} is not a mount point - history will not survive")
 
     conn = sqlite3.connect(DB_PATH)
-    print(f"[DB] Using: {DB_PATH}" + (f" ({note})" if note else ""))
-    return conn, None
+    print(f"[DB] Using: {DB_PATH}")
+    return conn, warning
 
 
 conn, storage_warning = open_db()
@@ -198,7 +275,7 @@ def find_state(text):
 def llm_extract_state(title, content):
     """Ask which tracked state an article concerns, for articles that name a city
     or project but never the state itself."""
-    if not budget.can_call_llm():
+    if not FAST_MODEL or not budget.can_call_llm():
         return None
 
     budget.llm_calls += 1
@@ -220,7 +297,7 @@ Article:
 {content[:2000]}
 """
         response = client.chat.completions.create(
-            model=SUMMARY_MODEL,
+            model=FAST_MODEL,
             messages=[{"role": "user", "content": prompt}],
         )
         answer = response.choices[0].message.content.strip().lower()
@@ -298,7 +375,7 @@ def cluster_stories(items):
     """
     singletons = [[i] for i in range(len(items))]
 
-    if len(items) < 2 or not budget.can_call_llm():
+    if len(items) < 2 or not STRONG_MODEL or not budget.can_call_llm():
         return singletons
 
     budget.llm_calls += 1
@@ -321,7 +398,7 @@ Every index from 0 to {len(items) - 1} must appear exactly once.
 
     try:
         response = client.chat.completions.create(
-            model=CLUSTER_MODEL,
+            model=STRONG_MODEL,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
         )
@@ -462,8 +539,9 @@ def build_email(clusters, reviewed, seeding):
     today = datetime.now(timezone(timedelta(hours=5, minutes=30))).strftime("%d %b %Y")
     lines = [f"SOLAR & BESS DAILY — {today}", ""]
 
-    if storage_warning:
-        lines += ["!" * 60, storage_warning, "!" * 60, ""]
+    for warning in (storage_warning, model_warning):
+        if warning:
+            lines += ["!" * 60, warning, "!" * 60, ""]
 
     if seeding:
         lines += [
@@ -520,9 +598,16 @@ def build_email(clusters, reviewed, seeding):
 
 # ---------------- MAIN ----------------
 def main():
-    seeding = seen_count() == 0
+    # Seeding is only safe when an empty table genuinely means "first run ever".
+    # If storage is not persistent every run starts empty, and seeding would mean
+    # news is never delivered at all. Repeated news beats no news.
+    seeding = seen_count() == 0 and not storage_warning
+
     if seeding:
         print("[SYSTEM] First run — seeding history, no news will be sent")
+    elif seen_count() == 0:
+        print("[SYSTEM] Empty history but storage is not persistent — "
+              "processing normally rather than seeding")
 
     collected = []
     for site in SITES:
