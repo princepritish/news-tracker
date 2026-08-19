@@ -232,14 +232,24 @@
       "galvalume structure"
     ],
     "allowed_states": [
-      "Jharkhand",
       "Bihar",
+      "Jharkhand",
       "Odisha",
       "Assam",
+      "West Bengal",
+      "Andhra Pradesh",
+      "Telangana",
+      "Uttar Pradesh",
       "Chhattisgarh",
       "Madhya Pradesh",
-      "Andhra Pradesh",
-      "Uttar Pradesh"
+      "Arunachal Pradesh",
+      "Meghalaya",
+      "Manipur",
+      "Mizoram",
+      "Nagaland",
+      "Tripura",
+      "Sikkim",
+      "Bhutan"
     ]
   }
 }
