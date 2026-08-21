@@ -69,6 +69,14 @@ MAX_ITEMS_PER_EMAIL = int(os.getenv("MAX_ITEMS_PER_EMAIL", "60"))
 DEDUP_WINDOW_DAYS = int(os.getenv("DEDUP_WINDOW_DAYS", "7"))
 FEED_TIMEOUT = int(os.getenv("FEED_TIMEOUT", "20"))
 
+# --- testing switches (all default off, safe to leave unset in production) ---
+# DRY_RUN=1      print the email instead of sending it
+# SKIP_SEEDING=1 process news even when history is empty, instead of seeding
+# ONLY_SITES=n   use just the first n feeds, for a fast rehearsal
+DRY_RUN = os.getenv("DRY_RUN") == "1"
+SKIP_SEEDING = os.getenv("SKIP_SEEDING") == "1"
+ONLY_SITES = int(os.getenv("ONLY_SITES", "0"))
+
 if not GROQ_API_KEY or not BREVO_API_KEY:
     raise Exception("Missing API keys")
 if not EMAIL_TO:
@@ -79,6 +87,10 @@ if not TO_EMAILS:
     raise Exception("EMAIL_TO contained no usable addresses")
 
 BCC_EMAILS = [EMAIL_BCC.strip()] if EMAIL_BCC and EMAIL_BCC.strip() else []
+
+if ONLY_SITES > 0:
+    SITES = SITES[:ONLY_SITES]
+    print(f"[INIT] ONLY_SITES={ONLY_SITES} — using first {len(SITES)} feed(s)")
 
 client = Groq(api_key=GROQ_API_KEY)
 
@@ -164,10 +176,9 @@ def open_db():
     """Return (connection, health_note). Never raises - a storage problem must
     still produce an email, with the problem stated in it.
 
-    Creating the directory is NOT proof of persistence: on Railway the container
-    runs as root, so os.makedirs("/data") happily succeeds and produces a path
-    that is wiped when the container stops. The only reliable signal is whether a
-    volume is actually mounted there.
+    Whether the file survives is a property of the deployment, not of the path,
+    so this makes no attempt to infer it. An empty table is reported by the run
+    itself, which is the observable fact that actually matters.
     """
     directory = os.path.dirname(DB_PATH) or "."
 
@@ -493,6 +504,17 @@ def process_site(site, seeding):
 
 # ---------------- EMAIL ----------------
 def send_email(subject, body):
+    # DRY_RUN prints the exact email instead of sending it, so a run can be
+    # rehearsed against live feeds without anything reaching an inbox.
+    if DRY_RUN:
+        print("\n" + "=" * 70)
+        print(f"[DRY RUN] would send to {TO_EMAILS} bcc {BCC_EMAILS}")
+        print(f"[DRY RUN] subject: {subject}")
+        print("=" * 70)
+        print(body)
+        print("=" * 70 + "\n")
+        return
+
     try:
         payload = {
             "sender": {"name": "Solar Alerts", "email": SENDER_EMAIL},
@@ -591,7 +613,10 @@ def main():
     # An empty table means either the very first run or a fresh deployment. Either
     # way the feeds are full of already-published back content, so record it as
     # reviewed and start clean rather than emailing weeks of history.
-    seeding = seen_count() == 0
+    seeding = seen_count() == 0 and not SKIP_SEEDING
+
+    if SKIP_SEEDING and seen_count() == 0:
+        print("[SYSTEM] SKIP_SEEDING set — processing news on an empty history")
 
     if seeding:
         print("[SYSTEM] History empty (first run or new deployment) — seeding")

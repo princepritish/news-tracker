@@ -28,6 +28,53 @@ show up as misses even when they do have a working feed.
 - `EMAIL_TO`: Comma-separated recipient list (must include at least two email IDs)
 - `EMAIL_BCC`: Optional single BCC email ID
 
+## Testing
+
+Four levels, cheapest first. Nothing below level 3 can reach an inbox.
+
+**1. Offline suite — no network, no API keys, no cost**
+
+```bash
+python test_script.py
+```
+
+26 checks covering the normal path plus the failure modes: clustering failure,
+storage failure, dead feeds, no usable model, budget caps. Every case asserts an
+email is still produced.
+
+**2. Dry run against live feeds — real data, nothing sent**
+
+```bash
+export GROQ_API_KEY=... BREVO_API_KEY=... EMAIL_TO=you@example.com
+DRY_RUN=1 SKIP_SEEDING=1 ONLY_SITES=3 python script.py
+```
+
+Prints the exact email to stdout instead of sending it. `SKIP_SEEDING=1` is what
+makes this useful — without it an empty database just seeds and shows no news.
+`ONLY_SITES=3` keeps the rehearsal quick; drop it for the full 43.
+
+Watch for: `[MODELS] N available:` (which Groq models your key really has),
+`[FEED ERROR]` lines (broken URLs), and whether clustering merged what it should.
+
+**3. Real send, to yourself only**
+
+```bash
+EMAIL_TO=you@example.com SKIP_SEEDING=1 ONLY_SITES=5 python script.py
+```
+
+Confirms Brevo delivery and how the digest actually renders in a mail client.
+
+**4. On Railway**
+
+Set `DRY_RUN=1` in the service variables and trigger a run manually. The email
+appears in the deploy logs. Remove the variable when you're satisfied.
+
+Feed URLs are checked separately:
+
+```bash
+python verify_feeds.py          # which of the 43 actually serve a feed
+```
+
 ### Deduplication
 
 - `DEDUP_MODE`: `shadow` (default), `on`, or `off`
