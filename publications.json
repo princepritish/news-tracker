@@ -1,0 +1,261 @@
+{
+  "publications": [
+    {
+      "id": 1,
+      "name": "EQ – The Leading Solar Magazine",
+      "focus": "Solar",
+      "site": "https://www.eqmagpro.com/"
+    },
+    {
+      "id": 2,
+      "name": "SolarQuarter",
+      "focus": "Solar + Storage",
+      "site": "https://solarquarter.com/"
+    },
+    {
+      "id": 3,
+      "name": "Saur International Energy",
+      "focus": "Solar + Renewable",
+      "site": "https://www.saurenergy.com/"
+    },
+    {
+      "id": 4,
+      "name": "pv magazine India",
+      "focus": "Solar PV + Storage",
+      "site": "https://www.pv-magazine-india.com/"
+    },
+    {
+      "id": 5,
+      "name": "Renewable Watch",
+      "focus": "Renewable + Solar",
+      "site": "https://renewablewatch.in/"
+    },
+    {
+      "id": 6,
+      "name": "Energetica India",
+      "focus": "Solar + Energy",
+      "site": "https://www.energetica-india.net/"
+    },
+    {
+      "id": 7,
+      "name": "Renewable Affairs",
+      "focus": "Solar + Renewables",
+      "site": "https://renewableaffairs.com/"
+    },
+    {
+      "id": 8,
+      "name": "Renewable Mirror",
+      "focus": "Renewable Energy",
+      "site": "https://www.renewablemirror.com/"
+    },
+    {
+      "id": 9,
+      "name": "Mercom India",
+      "focus": "Solar + Clean Energy",
+      "site": "https://www.mercomindia.com/",
+      "source_url": "https://www.mercomindia.com/event",
+      "note": "Source list pointed at the /event page; using the site root for feed discovery. mercomindia.com/feed/ is already live in config.json."
+    },
+    {
+      "id": 10,
+      "name": "Energy Next",
+      "focus": "Energy + Renewables",
+      "site": "https://www.energynext.com/"
+    },
+    {
+      "id": 11,
+      "name": "Akshay Urja",
+      "focus": "Renewable Energy",
+      "site": "https://akshayurja.gov.in/"
+    },
+    {
+      "id": 12,
+      "name": "Solar Power World",
+      "focus": "Solar + EPC",
+      "site": "https://www.solarpowerworldonline.com/"
+    },
+    {
+      "id": 13,
+      "name": "Renewable Energy Magazine",
+      "focus": "Renewable Energy",
+      "site": "https://www.renewableenergymagazine.com/"
+    },
+    {
+      "id": 14,
+      "name": "Solar Magazine",
+      "focus": "Solar Industry",
+      "site": "https://solarmagazine.com/"
+    },
+    {
+      "id": 15,
+      "name": "Solar Builder Magazine",
+      "focus": "Solar Installation/EPC",
+      "site": "https://solarbuildermag.com/"
+    },
+    {
+      "id": 16,
+      "name": "PHOTON International",
+      "focus": "Solar PV",
+      "site": "https://www.photon.com/"
+    },
+    {
+      "id": 17,
+      "name": "Solar Energy International",
+      "focus": "Solar",
+      "site": "https://www.solarenergy.org/"
+    },
+    {
+      "id": 18,
+      "name": "Renewable Energy World",
+      "focus": "Renewable Energy",
+      "site": "https://www.renewableenergyworld.com/"
+    },
+    {
+      "id": 19,
+      "name": "Electrical India",
+      "focus": "Electrical + Power + Solar",
+      "site": "https://www.electricalindia.in/"
+    },
+    {
+      "id": 20,
+      "name": "Power Line",
+      "focus": "Power + Renewable",
+      "site": "https://powerline.net.in/"
+    },
+    {
+      "id": 21,
+      "name": "Electrical Mirror",
+      "focus": "Electrical + Energy",
+      "site": "https://electricalmirror.net/"
+    },
+    {
+      "id": 22,
+      "name": "Electrical & Power Review",
+      "focus": "Electrical + Power",
+      "site": "https://www.eprmagazine.com/"
+    },
+    {
+      "id": 23,
+      "name": "Power Review",
+      "focus": "Power Industry",
+      "site": "https://www.powerreviews.com/",
+      "note": "powerreviews.com is PowerReviews, a US product-ratings SaaS vendor - not a power-sector trade magazine. Likely a wrong URL for the intended publication."
+    },
+    {
+      "id": 24,
+      "name": "India Power Monitor",
+      "focus": "Power Sector",
+      "site": "https://indiapowermonitor.com/"
+    },
+    {
+      "id": 25,
+      "name": "T&D India",
+      "focus": "Transmission & Distribution",
+      "site": "https://www.tndindia.com/"
+    },
+    {
+      "id": 26,
+      "name": "Power Engineering",
+      "focus": "Power Engineering",
+      "site": "https://powerengineering.co.in/"
+    },
+    {
+      "id": 27,
+      "name": "Energy Infra Post",
+      "focus": "Energy + Infrastructure",
+      "site": "https://energyinfrapost.com/",
+      "source_url": "https://www.iotglobalnetwork.com/companies/single/id/2118/energy-infra-post",
+      "note": "Source list pointed at an IoT Global Network directory entry, not the publication itself. Using the publication's own domain; verify it is the right outlet."
+    },
+    {
+      "id": 28,
+      "name": "The Battery Magazine",
+      "focus": "Battery + Storage",
+      "site": "https://www.thebatterymagazine.com/"
+    },
+    {
+      "id": 29,
+      "name": "India Energy Storage Week publications",
+      "focus": "Storage + Battery",
+      "site": "https://www.energystorageweek.in/"
+    },
+    {
+      "id": 30,
+      "name": "Battery Power Online",
+      "focus": "Battery Technology",
+      "site": "https://www.batterypoweronline.com/"
+    },
+    {
+      "id": 31,
+      "name": "Battery Industry",
+      "focus": "Battery Industry",
+      "site": "https://batteryindustry.net/"
+    },
+    {
+      "id": 32,
+      "name": "Energy Storage News",
+      "focus": "Storage + Renewable",
+      "site": "https://www.energy-storage.news/"
+    },
+    {
+      "id": 33,
+      "name": "PV Tech",
+      "focus": "Solar + Storage",
+      "site": "https://www.pv-tech.org/"
+    },
+    {
+      "id": 34,
+      "name": "ESS News",
+      "focus": "Energy Storage",
+      "site": "https://www.ess-news.com/"
+    },
+    {
+      "id": 35,
+      "name": "Construction World",
+      "focus": "Construction + Infrastructure",
+      "site": "https://www.constructionworld.in/"
+    },
+    {
+      "id": 36,
+      "name": "Infrastructure Today",
+      "focus": "Infrastructure",
+      "site": "https://infrastructuretoday.co.in/"
+    },
+    {
+      "id": 37,
+      "name": "Indian Infrastructure",
+      "focus": "Infrastructure + Energy",
+      "site": "https://indianinfrastructure.com/"
+    },
+    {
+      "id": 38,
+      "name": "Equipment India",
+      "focus": "EPC + Equipment",
+      "site": "https://equipmentindia.com/"
+    },
+    {
+      "id": 39,
+      "name": "Smart Utilities",
+      "focus": "Utilities + Power",
+      "site": "https://smartutilities.net.in/"
+    },
+    {
+      "id": 40,
+      "name": "Energy Manager Magazine",
+      "focus": "Energy Management",
+      "site": "https://www.energymanagermagazine.co.uk/"
+    },
+    {
+      "id": 41,
+      "name": "Energy Industry Review",
+      "focus": "Energy + Industry",
+      "site": "https://energyindustryreview.com/"
+    },
+    {
+      "id": 42,
+      "name": "Sustainability Magazine",
+      "focus": "Sustainability + Clean Energy",
+      "site": "https://sustainabilitymag.com/"
+    }
+  ]
+}
