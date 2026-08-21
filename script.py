@@ -52,11 +52,12 @@ EMAIL_TO = os.getenv("EMAIL_TO")
 EMAIL_BCC = os.getenv("EMAIL_BCC")
 SENDER_EMAIL = os.getenv("SENDER_EMAIL", "princepritish26@gmail.com")
 
-# Railway wipes the container filesystem on redeploy, and a cron job gets a fresh
-# container every run. Without a mounted volume the seen-table starts empty every
-# time and the same news is re-sent forever, so the path is explicit and the run
-# reports which one it actually used.
-DB_PATH = os.getenv("DB_PATH", "/data/seen.db")
+# Cron runs on Railway share the deployment's filesystem, so a plain relative path
+# persists across runs - that is what the current deployment does and it works. A
+# new *deployment* replaces the filesystem and the history starts empty again;
+# that case is detected at runtime and reported, rather than guessed at from the
+# path. Mount a volume and set DB_PATH=/data/seen.db to survive deploys too.
+DB_PATH = os.getenv("DB_PATH", "seen.db")
 
 SUMMARY_MODEL = os.getenv("SUMMARY_MODEL", "llama-3.1-8b-instant")
 CLUSTER_MODEL = os.getenv("CLUSTER_MODEL", "llama-3.3-70b-versatile")
@@ -170,42 +171,25 @@ def open_db():
     """
     directory = os.path.dirname(DB_PATH) or "."
 
-    if os.getenv("ACKNOWLEDGE_EPHEMERAL_DB") == "1":
-        conn = sqlite3.connect(DB_PATH)
-        print(f"[DB] Using: {DB_PATH} (ephemeral, acknowledged)")
-        return conn, None
-
-    warning = None
-    if not os.path.isdir(directory):
+    if directory != "." and not os.path.isdir(directory):
         try:
             os.makedirs(directory, exist_ok=True)
         except Exception:
             pass
 
-    if not os.path.isdir(directory):
-        fallback = os.path.basename(DB_PATH)
-        print(f"[DB] {directory} unavailable; using {fallback}")
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("SELECT 1")
+        print(f"[DB] Using: {DB_PATH}")
+        return conn, None
+    except Exception as e:
+        fallback = os.path.basename(DB_PATH) or "seen.db"
+        print(f"[DB] {DB_PATH} unusable ({e}); falling back to {fallback}")
         return sqlite3.connect(fallback), (
-            f"STORAGE NOT PERSISTENT: {directory} could not be created, so history "
-            f"went to '{fallback}' inside the container and is lost when the run "
-            f"ends. Every run will look like the first run and you will never "
-            f"receive news. Fix: Railway → service → Settings → Volumes → mount a "
-            f"volume at {directory}."
+            f"STORAGE PROBLEM: {DB_PATH} could not be opened ({e}), so history was "
+            f"written to '{fallback}' instead. If this repeats, the same news may "
+            f"be sent again."
         )
-
-    if not os.path.ismount(directory):
-        warning = (
-            f"STORAGE NOT PERSISTENT: {directory} exists but no volume is mounted "
-            f"there, so it is wiped when the container restarts. Every run will "
-            f"look like the first run and you will never receive news. "
-            f"Fix: Railway → service → Settings → Volumes → mount a volume at "
-            f"{directory}. (Set ACKNOWLEDGE_EPHEMERAL_DB=1 to silence this.)"
-        )
-        print(f"[DB] WARNING: {directory} is not a mount point - history will not survive")
-
-    conn = sqlite3.connect(DB_PATH)
-    print(f"[DB] Using: {DB_PATH}")
-    return conn, warning
 
 
 conn, storage_warning = open_db()
@@ -545,11 +529,17 @@ def build_email(clusters, reviewed, seeding):
 
     if seeding:
         lines += [
-            "First run — no email content by design.",
+            "History was empty at the start of this run, so no news is listed.",
             "",
             f"{seen_count()} existing articles across {len(SITES)} feeds have been "
             "recorded as already reviewed. From tomorrow you will receive only "
             "genuinely new items.",
+            "",
+            "This happens on the very first run, and again after a deployment — "
+            "a new deployment replaces the container filesystem, so the database "
+            "starts empty. Cron runs between deployments keep their history. To "
+            "carry history across deployments too, mount a Railway volume and set "
+            "DB_PATH to a path inside it.",
             "",
         ]
     elif not clusters:
@@ -598,16 +588,13 @@ def build_email(clusters, reviewed, seeding):
 
 # ---------------- MAIN ----------------
 def main():
-    # Seeding is only safe when an empty table genuinely means "first run ever".
-    # If storage is not persistent every run starts empty, and seeding would mean
-    # news is never delivered at all. Repeated news beats no news.
-    seeding = seen_count() == 0 and not storage_warning
+    # An empty table means either the very first run or a fresh deployment. Either
+    # way the feeds are full of already-published back content, so record it as
+    # reviewed and start clean rather than emailing weeks of history.
+    seeding = seen_count() == 0
 
     if seeding:
-        print("[SYSTEM] First run — seeding history, no news will be sent")
-    elif seen_count() == 0:
-        print("[SYSTEM] Empty history but storage is not persistent — "
-              "processing normally rather than seeding")
+        print("[SYSTEM] History empty (first run or new deployment) — seeding")
 
     collected = []
     for site in SITES:
