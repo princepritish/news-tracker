@@ -1,0 +1,410 @@
+{
+  "sources": [
+    {
+      "state": "Bihar",
+      "agency": "BREDA",
+      "utility": "BSPHCL / NBPDCL / SBPDCL",
+      "portals": [
+        {
+          "label": "e-tender portal",
+          "url": "https://www.eproc2.bihar.gov.in/",
+          "kind": "etender"
+        },
+        {
+          "label": "tender page",
+          "url": "https://bsphcl.co.in/tenders.html",
+          "kind": "tender_page"
+        },
+        {
+          "label": "REDA",
+          "url": "https://breda.bihar.gov.in/",
+          "kind": "agency"
+        },
+        {
+          "label": "DISCOM",
+          "url": "https://bsphcl.co.in/",
+          "kind": "discom"
+        }
+      ]
+    },
+    {
+      "state": "Jharkhand",
+      "agency": "JREDA",
+      "utility": "JBVNL",
+      "portals": [
+        {
+          "label": "e-tender portal",
+          "url": "https://jharkhandtenders.gov.in/",
+          "kind": "etender"
+        },
+        {
+          "label": "tender page",
+          "url": "https://jharkhandtenders.gov.in/nicgep/app?page=Home&service=page",
+          "kind": "tender_page"
+        },
+        {
+          "label": "REDA",
+          "url": "https://jreda.com/",
+          "kind": "agency"
+        },
+        {
+          "label": "DISCOM",
+          "url": "https://www.jbvnl.co.in/",
+          "kind": "discom"
+        }
+      ]
+    },
+    {
+      "state": "Odisha",
+      "agency": "OREDA",
+      "utility": "TPCODL / TPNODL / TPSODL / TPWODL",
+      "portals": [
+        {
+          "label": "e-tender portal",
+          "url": "https://tendersodisha.gov.in/",
+          "kind": "etender"
+        },
+        {
+          "label": "REDA",
+          "url": "https://oredaodisha.com/",
+          "kind": "agency"
+        },
+        {
+          "label": "DISCOM",
+          "url": "https://www.tpsouthernodisha.com/",
+          "kind": "discom"
+        }
+      ]
+    },
+    {
+      "state": "Assam",
+      "agency": "AEDA",
+      "utility": "APDCL",
+      "portals": [
+        {
+          "label": "e-tender portal",
+          "url": "https://assamtenders.gov.in/",
+          "kind": "etender"
+        },
+        {
+          "label": "REDA",
+          "url": "https://aeda.assam.gov.in/",
+          "kind": "agency"
+        },
+        {
+          "label": "DISCOM",
+          "url": "https://www.apdcl.org/",
+          "kind": "discom"
+        }
+      ]
+    },
+    {
+      "state": "West Bengal",
+      "agency": "WBREDA",
+      "utility": "WBSEDCL",
+      "portals": [
+        {
+          "label": "e-tender portal",
+          "url": "https://wbtenders.gov.in/",
+          "kind": "etender"
+        },
+        {
+          "label": "REDA",
+          "url": "https://wbredda.org/",
+          "kind": "agency"
+        },
+        {
+          "label": "DISCOM",
+          "url": "https://www.wbsedcl.in/",
+          "kind": "discom"
+        }
+      ]
+    },
+    {
+      "state": "Andhra Pradesh",
+      "agency": "NREDCAP",
+      "utility": "APSPDCL / APEPDCL",
+      "portals": [
+        {
+          "label": "e-tender portal",
+          "url": "https://tender.apeprocurement.gov.in/",
+          "kind": "etender"
+        },
+        {
+          "label": "REDA",
+          "url": "https://nredcap.in/",
+          "kind": "agency"
+        },
+        {
+          "label": "DISCOM",
+          "url": "https://www.apeasternpower.com/",
+          "kind": "discom"
+        }
+      ]
+    },
+    {
+      "state": "Telangana",
+      "agency": "TGREDCO",
+      "utility": "TGNPDCL / TGSPDCL",
+      "portals": [
+        {
+          "label": "e-tender portal",
+          "url": "https://tender.telangana.gov.in/",
+          "kind": "etender"
+        },
+        {
+          "label": "REDA",
+          "url": "https://tgredco.telangana.gov.in/",
+          "kind": "agency"
+        },
+        {
+          "label": "DISCOM",
+          "url": "https://tgsouthernpower.org/",
+          "kind": "discom"
+        }
+      ]
+    },
+    {
+      "state": "Uttar Pradesh",
+      "agency": "UPNEDA",
+      "utility": "PVVNL / DVVNL / MVVNL / PuVVNL / KESCO",
+      "portals": [
+        {
+          "label": "e-tender portal",
+          "url": "https://etender.up.nic.in/",
+          "kind": "etender"
+        },
+        {
+          "label": "REDA",
+          "url": "https://upneda.org.in/",
+          "kind": "agency"
+        },
+        {
+          "label": "DISCOM",
+          "url": "https://www.uppcl.org/",
+          "kind": "discom"
+        }
+      ]
+    },
+    {
+      "state": "Chhattisgarh",
+      "agency": "CREDA",
+      "utility": "CSPDCL",
+      "portals": [
+        {
+          "label": "e-tender portal",
+          "url": "https://eproc.cgstate.gov.in/",
+          "kind": "etender"
+        },
+        {
+          "label": "tender page",
+          "url": "https://cspdcl.co.in/cseb/frmViewTenderesNEW.aspx?paramflag=2",
+          "kind": "tender_page"
+        },
+        {
+          "label": "REDA",
+          "url": "https://creda.co.in/",
+          "kind": "agency"
+        },
+        {
+          "label": "DISCOM",
+          "url": "https://cspdcl.co.in/",
+          "kind": "discom"
+        }
+      ]
+    },
+    {
+      "state": "Madhya Pradesh",
+      "agency": "MPUVNL",
+      "utility": "MPPKVVCL / MPMKVVCL / MPPoKVVCL",
+      "portals": [
+        {
+          "label": "e-tender portal",
+          "url": "https://mptenders.gov.in/",
+          "kind": "etender"
+        },
+        {
+          "label": "REDA",
+          "url": "https://mprenewable.nic.in/",
+          "kind": "agency"
+        },
+        {
+          "label": "DISCOM",
+          "url": "https://portal.mpcz.in/",
+          "kind": "discom"
+        }
+      ]
+    },
+    {
+      "state": "Arunachal Pradesh",
+      "agency": "APEDA / Power Department",
+      "utility": "Department of Power",
+      "portals": [
+        {
+          "label": "e-tender portal",
+          "url": "https://arunachaltenders.gov.in/",
+          "kind": "etender"
+        },
+        {
+          "label": "tender page",
+          "url": "https://power.arunachal.gov.in/tender.php",
+          "kind": "tender_page"
+        },
+        {
+          "label": "REDA",
+          "url": "https://power.arunachal.gov.in/",
+          "kind": "agency"
+        }
+      ]
+    },
+    {
+      "state": "Meghalaya",
+      "agency": "MEDA",
+      "utility": "MePDCL",
+      "portals": [
+        {
+          "label": "e-tender portal",
+          "url": "https://meghalayatenders.gov.in/",
+          "kind": "etender"
+        },
+        {
+          "label": "REDA",
+          "url": "https://meghalaya.gov.in/",
+          "kind": "agency"
+        },
+        {
+          "label": "DISCOM",
+          "url": "https://meecl.nic.in/",
+          "kind": "discom"
+        }
+      ]
+    },
+    {
+      "state": "Manipur",
+      "agency": "MANIREDA",
+      "utility": "MSPDCL",
+      "portals": [
+        {
+          "label": "e-tender portal",
+          "url": "https://manipurtenders.gov.in/",
+          "kind": "etender"
+        },
+        {
+          "label": "tender page",
+          "url": "https://mspdcl.in/tenders",
+          "kind": "tender_page"
+        },
+        {
+          "label": "REDA",
+          "url": "https://manipur.gov.in/",
+          "kind": "agency"
+        },
+        {
+          "label": "DISCOM",
+          "url": "https://mspdcl.in/",
+          "kind": "discom"
+        }
+      ]
+    },
+    {
+      "state": "Mizoram",
+      "agency": "ZEDA / Power Department",
+      "utility": "Power & Electricity Department",
+      "portals": [
+        {
+          "label": "e-tender portal",
+          "url": "https://mizoramtenders.gov.in/",
+          "kind": "etender"
+        },
+        {
+          "label": "REDA",
+          "url": "https://power.mizoram.gov.in/",
+          "kind": "agency"
+        }
+      ]
+    },
+    {
+      "state": "Nagaland",
+      "agency": "NREDA / Power Department",
+      "utility": "Department of Power",
+      "portals": [
+        {
+          "label": "e-tender portal",
+          "url": "https://nagalandtenders.gov.in/",
+          "kind": "etender"
+        },
+        {
+          "label": "REDA",
+          "url": "https://power.nagaland.gov.in/",
+          "kind": "agency"
+        }
+      ]
+    },
+    {
+      "state": "Tripura",
+      "agency": "TREDA",
+      "utility": "TSECL",
+      "portals": [
+        {
+          "label": "e-tender portal",
+          "url": "https://tripuratenders.gov.in/",
+          "kind": "etender"
+        },
+        {
+          "label": "REDA",
+          "url": "https://treda.tripura.gov.in/",
+          "kind": "agency"
+        },
+        {
+          "label": "DISCOM",
+          "url": "https://tsecl.in/",
+          "kind": "discom"
+        }
+      ]
+    },
+    {
+      "state": "Sikkim",
+      "agency": "SREDA / Energy & Power Department",
+      "utility": "Energy & Power Department",
+      "portals": [
+        {
+          "label": "e-tender portal",
+          "url": "https://sikkimtenders.gov.in/",
+          "kind": "etender"
+        },
+        {
+          "label": "REDA",
+          "url": "https://sikkim.gov.in/",
+          "kind": "agency"
+        },
+        {
+          "label": "DISCOM",
+          "url": "https://power.sikkim.gov.in/",
+          "kind": "discom"
+        }
+      ]
+    },
+    {
+      "state": "Bhutan",
+      "agency": "Department of Energy",
+      "utility": "Bhutan Power Corporation (BPC)",
+      "portals": [
+        {
+          "label": "e-tender portal",
+          "url": "https://www.gov.bt/",
+          "kind": "etender"
+        },
+        {
+          "label": "tender page",
+          "url": "https://www.bpc.bt/",
+          "kind": "tender_page"
+        },
+        {
+          "label": "REDA",
+          "url": "https://energy.gov.bt/",
+          "kind": "agency"
+        }
+      ]
+    }
+  ]
+}

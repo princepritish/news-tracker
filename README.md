@@ -28,6 +28,38 @@ show up as misses even when they do have a working feed.
 - `EMAIL_TO`: Comma-separated recipient list (must include at least two email IDs)
 - `EMAIL_BCC`: Optional single BCC email ID
 
+## Phase 2 — government tenders
+
+`sources.json` holds 18 regions from the tender database: e-tender portal, REDA
+agency and DISCOM for each. Off by default; enable with `TENDERS_ENABLED=1`.
+
+```bash
+python probe_tenders.py        # which portals respond, and what they return
+python test_tenders.py         # offline tests, no network
+```
+
+Portals are read by harvesting every link and keeping those whose text matches a
+tender keyword, rather than by parsing each site precisely. Tender titles live in
+link text, so this survives restyling and works on platforms nobody has adapted
+yet — at the cost of precision. Run `probe_tenders.py` to capture real HTML:
+portals returning many links but no matches are the ones needing a dedicated
+adapter, usually because the listing sits behind a search form.
+
+Tender identity is portal + normalised title, deliberately **not** the URL —
+GePNIC detail links carry session parameters that change between visits, which
+would re-report the same tender every day.
+
+Tender collection makes **no LLM calls**, and is wrapped so any failure — a dead
+portal, a malformed page, all 36 portals down at once — costs you the tender
+section only, never the news digest.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `TENDERS_ENABLED` | `0` | `1` switches Phase 2 on |
+| `MAX_PORTAL_FETCHES` | `40` | Portal requests per run |
+| `PORTAL_TIMEOUT` | `25` | Seconds per portal |
+| `MAX_TENDERS_PER_EMAIL` | `40` | Cap on listed tenders |
+
 ## Testing
 
 Four levels, cheapest first. Nothing below level 3 can reach an inbox.

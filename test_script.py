@@ -162,5 +162,57 @@ s = load(); SENT.clear(); s.main(); SENT.clear(); s2 = load(); s2.main()
 check("llm calls stay at 0", s2.budget.llm_calls, 0)
 check("still sends", len(SENT), 1)
 
+import requests
+print("\n=== tenders section (Phase 2) ===")
+os.environ["TENDERS_ENABLED"] = "1"
+os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
+
+TENDER_HTML = ('<html><body>'
+  '<a href="/d?id=1">Supply and Installation of 500 kWp Rooftop Solar Plant</a>'
+  '<a href="/d?id=2">Construction of boundary wall at block office</a>'
+  '</body></html>')
+
+_orig_get = requests.get
+def _get(url, **kw):
+    if "gov.in" in url or "gov.bt" in url:
+        return types.SimpleNamespace(status_code=200, text=TENDER_HTML, content=b"")
+    return _orig_get(url, **kw)
+requests.get = _get
+
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("t"))
+s_ = load(); SENT.clear(); s_.main()          # run 1 seeds
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("t2"))
+s_ = load(); SENT.clear(); s_.main()
+_b = SENT[0]["textContent"]
+check("tenders section present", "TENDERS & GOVT NOTICES" in _b, True)
+check("solar tender listed", "Rooftop Solar Plant" in _b, True)
+check("non-solar tender excluded", "boundary wall" in _b, False)
+check("tender count in footer", "Tenders:" in _b, True)
+
+# same tenders next run -> already recorded, so not repeated
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("t3"))
+s_ = load(); SENT.clear(); s_.main()
+check("tender not repeated next run", "Rooftop Solar Plant" in SENT[0]["textContent"], False)
+
+# a portal blowing up must not cost us the news digest
+def _boom(url, **kw):
+    if "gov.in" in url or "gov.bt" in url:
+        raise ConnectionError("portal down")
+    return _orig_get(url, **kw)
+requests.get = _boom
+# Fresh db + no seeding: earlier batches in this file reuse the same figures, so
+# a shared db would (correctly) suppress them and hide what we're testing.
+os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
+os.environ["SKIP_SEEDING"] = "1"
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("t4"))
+s_ = load(); SENT.clear(); s_.main()
+_b = SENT[0]["textContent"]
+check("news survives total tender failure", "BIHAR" in _b, True)
+check("portal errors reported", "portal error" in _b, True)
+
+requests.get = _orig_get
+os.environ["TENDERS_ENABLED"] = "0"
+os.environ.pop("SKIP_SEEDING", None)
+
 print("\n" + ("ALL PASS" if ok else "FAILURES ABOVE"))
 sys.exit(0 if ok else 1)

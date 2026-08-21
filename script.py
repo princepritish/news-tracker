@@ -23,6 +23,8 @@ from datetime import datetime, timedelta, timezone
 from newspaper import Article
 from groq import Groq
 
+import tenders
+
 # ---------------- CONFIG ----------------
 with open("config.json") as f:
     config = json.load(f)
@@ -31,6 +33,13 @@ SITES = config["sites"]
 FILTERS = config["filters"]
 
 KEYWORDS = [k.lower() for k in FILTERS.get("keywords", [])]
+
+# The spreadsheet's own Monitoring Guide lists what to search portals for. These
+# are matched against tender titles, which are far terser than article prose.
+TENDER_KEYWORDS = [k.lower() for k in FILTERS.get("tender_keywords", [
+    "solar", "spv", "rooftop solar", "pv", "solar pump", "epc",
+    "photovoltaic", "renewable", "battery", "bess",
+])]
 
 # Spelling variants seen in Indian trade press. The state list itself comes from
 # config.json so it stays in one place.
@@ -68,6 +77,13 @@ MAX_LLM_CALLS_PER_RUN = int(os.getenv("MAX_LLM_CALLS_PER_RUN", "60"))
 MAX_ITEMS_PER_EMAIL = int(os.getenv("MAX_ITEMS_PER_EMAIL", "60"))
 DEDUP_WINDOW_DAYS = int(os.getenv("DEDUP_WINDOW_DAYS", "7"))
 FEED_TIMEOUT = int(os.getenv("FEED_TIMEOUT", "20"))
+
+# Phase 2 - government tender portals. Off by default so enabling it is a
+# deliberate act; the news digest is unaffected either way.
+TENDERS_ENABLED = os.getenv("TENDERS_ENABLED", "0") == "1"
+MAX_PORTAL_FETCHES = int(os.getenv("MAX_PORTAL_FETCHES", "40"))
+PORTAL_TIMEOUT = int(os.getenv("PORTAL_TIMEOUT", "25"))
+MAX_TENDERS_PER_EMAIL = int(os.getenv("MAX_TENDERS_PER_EMAIL", "40"))
 
 # --- testing switches (all default off, safe to leave unset in production) ---
 # DRY_RUN=1      print the email instead of sending it
@@ -523,6 +539,61 @@ def process_site(site, seeding):
 
 
 # ---------------- EMAIL ----------------
+# ---------------- TENDER HISTORY (Phase 2) ----------------
+def ensure_tender_table():
+    c.execute("""CREATE TABLE IF NOT EXISTS tenders_seen (
+        key TEXT PRIMARY KEY, title TEXT, url TEXT, state TEXT, first_seen TEXT)""")
+    conn.commit()
+
+
+def tender_is_new(key):
+    c.execute("SELECT 1 FROM tenders_seen WHERE key=?", (key,))
+    return c.fetchone() is None
+
+
+def record_tender(item):
+    c.execute("INSERT OR IGNORE INTO tenders_seen VALUES (?,?,?,?,?)",
+              (item["key"], item["title"][:300], item["url"], item["state"],
+               datetime.now(timezone.utc).isoformat()))
+    conn.commit()
+
+
+def gather_tenders():
+    """Phase 2. Returns (new_items, errors) and never raises.
+
+    Wrapped whole: a failure anywhere in tender collection must not cost you the
+    news digest, which is the part that already works.
+    """
+    if not TENDERS_ENABLED:
+        return [], []
+
+    try:
+        ensure_tender_table()
+        sources = tenders.load_sources()
+        if not sources:
+            return [], ["sources.json empty or unreadable"]
+
+        found, errors = tenders.collect(
+            sources, TENDER_KEYWORDS, MAX_PORTAL_FETCHES, PORTAL_TIMEOUT)
+
+        unique, seen_keys = [], set()
+        for item in found:
+            item["key"] = tenders.tender_key(item)
+            # Two portals in one state can list the same tender.
+            if item["key"] in seen_keys or not tender_is_new(item["key"]):
+                continue
+            seen_keys.add(item["key"])
+            unique.append(item)
+
+        print(f"[TENDERS] {len(found)} matched, {len(unique)} new, "
+              f"{len(errors)} portal error(s)")
+        return unique, errors
+
+    except Exception as e:
+        print(f"[TENDERS ERROR] {type(e).__name__}: {e}")
+        return [], [f"tender collection failed ({type(e).__name__})"]
+
+
 def send_email(subject, body):
     # DRY_RUN prints the exact email instead of sending it, so a run can be
     # rehearsed against live feeds without anything reaching an inbox.
@@ -561,7 +632,7 @@ def send_email(subject, body):
         return False
 
 
-def build_email(clusters, reviewed, seeding):
+def build_email(clusters, reviewed, seeding, tender_items=None, tender_errors=None):
     today = datetime.now(timezone(timedelta(hours=5, minutes=30))).strftime("%d %b %Y")
     lines = [f"SOLAR & BESS DAILY — {today}", ""]
 
@@ -606,6 +677,34 @@ def build_email(clusters, reviewed, seeding):
                     lines.append(f"     {sources[0]}")
             lines.append("")
 
+    # ---- TENDERS section ----
+    tender_items = tender_items or []
+    tender_errors = tender_errors or []
+
+    if TENDERS_ENABLED and not seeding:
+        lines += ["=" * 60, "TENDERS & GOVT NOTICES", "=" * 60, ""]
+
+        if not tender_items:
+            lines += ["No new tenders matched today.", ""]
+        else:
+            by_state = {}
+            for item in tender_items[:MAX_TENDERS_PER_EMAIL]:
+                by_state.setdefault(item["state"], []).append(item)
+
+            t = 0
+            for state, entries in sorted(by_state.items()):
+                lines.append(state.upper())
+                for item in entries:
+                    t += 1
+                    lines.append(f" {t:>2}. {item['title']}")
+                    lines.append(f"     {item['url']}")
+                    lines.append(f"     {item['portal']} · {item['source']}")
+                lines.append("")
+
+            if len(tender_items) > MAX_TENDERS_PER_EMAIL:
+                lines += [f"...and {len(tender_items) - MAX_TENDERS_PER_EMAIL} "
+                          f"more not shown", ""]
+
     # Health footer: makes a quiet failure visible instead of looking like a slow
     # news day.
     lines += ["-" * 60]
@@ -623,6 +722,13 @@ def build_email(clusters, reviewed, seeding):
 
     lines.append(f"LLM calls: {budget.llm_calls}/{MAX_LLM_CALLS_PER_RUN} · "
                  f"scrapes: {budget.scrapes}/{MAX_SCRAPES_PER_RUN}")
+    if TENDERS_ENABLED:
+        lines.append(f"Tenders: {len(tender_items)} new, {len(tender_errors)} portal error(s)")
+        for err in tender_errors[:10]:
+            lines.append(f"  ! {err}")
+        if len(tender_errors) > 10:
+            lines.append(f"  ! ...and {len(tender_errors) - 10} more")
+
     lines.append(f"Storage: {DB_PATH} · {seen_count()} article(s) on record")
 
     return "\n".join(lines)
@@ -671,7 +777,11 @@ def main():
         print(f"[LIMIT] {len(clusters)} stories, capping at {MAX_ITEMS_PER_EMAIL}")
         clusters = clusters[:MAX_ITEMS_PER_EMAIL]
 
-    body = build_email(clusters, reviewed, seeding)
+    tender_items, tender_errors = ([], [])
+    if not seeding:
+        tender_items, tender_errors = gather_tenders()
+
+    body = build_email(clusters, reviewed, seeding, tender_items, tender_errors)
     print("\n" + body + "\n")
 
     if send_email(f"Solar & BESS Daily — {len(clusters)} story(ies)", body):
@@ -679,6 +789,8 @@ def main():
         # consume the day's news.
         for cluster in clusters:
             record_story(cluster)
+        for item in tender_items[:MAX_TENDERS_PER_EMAIL]:
+            record_tender(item)
     else:
         print("[SYSTEM] Send failed — stories not recorded, will retry next run")
 
