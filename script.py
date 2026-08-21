@@ -127,8 +127,28 @@ def resolve_models():
                 return name
         return None
 
-    fast = pick(FAST_CANDIDATES)
-    strong = pick(STRONG_CANDIDATES) or fast
+    # The named lists can go stale as Groq retires model IDs. Rather than give up
+    # and disable the LLM tier while usable models sit in the catalogue, fall back
+    # to anything that looks like a chat model - excluding the speech, safety and
+    # embedding models, which cannot answer a prompt.
+    NON_CHAT = ("whisper", "tts", "guard", "embed", "moderation", "rerank")
+
+    def any_chat(prefer_large):
+        chat = sorted(m for m in available
+                      if not any(x in m.lower() for x in NON_CHAT))
+        if not chat:
+            return None
+        large = [m for m in chat if any(s in m.lower() for s in ("70b", "-large", "32b"))]
+        if prefer_large and large:
+            return large[0]
+        small = [m for m in chat if any(s in m.lower() for s in ("8b", "9b", "instant", "mini"))]
+        return (small or chat)[0]
+
+    fast = pick(FAST_CANDIDATES) or any_chat(prefer_large=False)
+    strong = pick(STRONG_CANDIDATES) or any_chat(prefer_large=True) or fast
+
+    if fast and fast not in FAST_CANDIDATES:
+        print(f"[MODELS] No known model available; falling back to {fast!r}")
 
     note = None
     if not fast:

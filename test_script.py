@@ -146,7 +146,7 @@ rq.get = get
 print("\n=== no usable Groq model ===")
 import builtins
 _saved = MODELS[:]
-MODELS.clear(); MODELS.append("some-unknown-model")
+MODELS.clear(); MODELS.extend(["whisper-large-v3", "llama-guard-4"])  # no chat model
 os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
 feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("e"))
 s = load(); SENT.clear(); s.main()
