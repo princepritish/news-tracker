@@ -34,10 +34,24 @@ class Article:
 np.Article = Article
 sys.modules["newspaper"] = np
 
-os.chdir("/home/user/news-tracker")
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
 DB = tempfile.mktemp(suffix=".db")
+INTERNAL = tempfile.mktemp(suffix=".md")
 os.environ.update(GROQ_API_KEY="x", BREVO_API_KEY="x",
-                  EMAIL_TO="a@b.com,c@d.com", DB_PATH=DB)
+                  EMAIL_TO="a@b.com,c@d.com", DB_PATH=DB,
+                  REPORT_PATH="", INTERNAL_REPORT_PATH=INTERNAL)
+
+
+def internal():
+    """The owner's copy of the last run.
+
+    The email now goes to a client, so every diagnostic - feed errors,
+    budgets, storage warnings, why the history was empty - lives here and
+    in the run log instead. The "a quiet failure must stay visible"
+    invariant is unchanged; only the audience for it is.
+    """
+    with open(INTERNAL, encoding="utf-8") as fh:
+        return fh.read()
 
 SENT = []
 import requests as rq, feedparser
@@ -75,7 +89,7 @@ s = load(); SENT.clear(); s.main()
 body = SENT[0]["textContent"]
 check("one email sent", len(SENT), 1)
 check("no news listed", "SECI" in body, False)
-check("explains seeding", "already reviewed" in body, True)
+check("explains seeding", "already reviewed" in internal(), True)
 
 def fresh_batch(tag):
     """New URLs so they are genuinely unseen after the seeding run."""
@@ -86,7 +100,7 @@ feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("b"
 s = load(); SENT.clear(); s.main()
 body = SENT[0]["textContent"]
 check("one email", len(SENT), 1)
-check("3 matched -> 2 stories", "2 story(ies) after dedup" in body, True)
+check("3 matched -> 2 stories", "| Stories after dedup | 2 |" in internal(), True)
 check("cricket filtered out", "cricket" in body.lower(), False)
 check("BIHAR header", "BIHAR" in body, True)
 check("SIKKIM header (new state)", "SIKKIM" in body, True)
@@ -115,22 +129,33 @@ feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("c"
 s = load(); SENT.clear(); s.main()          # real
 body = SENT[0]["textContent"]
 check("still sends on LLM failure", len(SENT), 1)
-check("no story lost (3 stories)", "3 story(ies) after dedup" in body, True)
+check("no story lost (3 stories)", "| Stories after dedup | 3 |" in internal(), True)
 FAIL_CLUSTER = False
 
 print("\n=== storage failure surfaces in email ===")
-os.environ["DB_PATH"] = "/proc/nope/seen.db"     # unwritable
+# A plain file standing where a directory should be. Both makedirs and
+# sqlite3.connect fail on it on every platform, unlike /proc/... which only
+# exists on Linux - on Windows that path is created without complaint and the
+# storage failure this case exists to test never happens.
+_blocker = tempfile.mktemp(suffix=".notadir")
+open(_blocker, "w").close()
+os.environ["DB_PATH"] = os.path.join(_blocker, "seen.db")
 s = load(); SENT.clear(); s.main()
-check("warning in email", "STORAGE PROBLEM" in SENT[0]["textContent"], True)
-check("names the fix", "history was written to" in SENT[0]["textContent"].lower() or "STORAGE PROBLEM" in SENT[0]["textContent"], True)
+check("storage warning reaches the owner", "STORAGE PROBLEM" in internal(), True)
+check("names the fix", "history was written to" in internal().lower(), True)
+# open_db falls back to the basename in the cwd, which is the repo directory
+s.conn.close()
+for _f in (_blocker, "seen.db"):
+    try: os.remove(_f)
+    except OSError: pass
 
 print("\n=== empty db seeds and explains why ===")
 os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
 feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("d"))
 s = load(); SENT.clear(); s.main()
 _b = SENT[0]["textContent"]
-check("seeds on empty db", "recorded as already reviewed" in _b, True)
-check("explains deployment cause", "deployment" in _b, True)
+check("seeds on empty db", "recorded as already reviewed" in internal(), True)
+check("explains deployment cause", "deployment" in internal(), True)
 check("no news listed", "BIHAR" in _b, False)
 
 print("\n=== feed failure counted ===")
@@ -139,7 +164,7 @@ def bad_get(u, **k): raise ConnectionError("dns")
 rq.get = bad_get
 s = load(); SENT.clear(); s.main()
 body = SENT[0]["textContent"]
-check("feed error reported", "1 failed" in body, True)
+check("feed error reported", "1 failed" in internal(), True)
 check("still sends", len(SENT), 1)
 rq.get = get
 
@@ -151,7 +176,7 @@ os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
 feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("e"))
 s = load(); SENT.clear(); s.main()
 _b = SENT[0]["textContent"]
-check("model warning in email", "LLM UNAVAILABLE" in _b, True)
+check("model warning reaches the owner", "LLM UNAVAILABLE" in internal(), True)
 check("still sends", len(SENT), 1)
 check("no llm calls attempted", s.budget.llm_calls, 0)
 MODELS.clear(); MODELS.extend(_saved)
@@ -207,7 +232,7 @@ _b = SENT[0]["textContent"]
 check("tenders section present", "TENDERS & GOVT NOTICES" in _b, True)
 check("solar tender listed", "Rooftop Solar Plant" in _b, True)
 check("non-solar tender excluded", "boundary wall" in _b, False)
-check("tender count in footer", "Tenders:" in _b, True)
+check("tender count in footer", "| Tenders |" in internal(), True)
 
 # same tenders next run -> already recorded, so not repeated
 feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("t3"))
@@ -228,11 +253,148 @@ feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("t4
 s_ = load(); SENT.clear(); s_.main()
 _b = SENT[0]["textContent"]
 check("news survives total tender failure", "BIHAR" in _b, True)
-check("portal errors reported", "portal error" in _b, True)
+check("portal errors reported", "portal error" in internal(), True)
 
 requests.get = _orig_get
 os.environ["TENDERS_ENABLED"] = "0"
 os.environ.pop("SKIP_SEEDING", None)
+
+print("\n=== suppression key ===")
+# Round capacities repeat constantly: a live run turned up three unrelated
+# 100 MW stories whose figures alone were identical. Keyed on figures only, the
+# second one would silently suppress the first - the exact failure this project
+# cares most about. The state scopes the key so that cannot happen.
+os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
+s = load()
+check("same figures, different states -> different keys",
+      s.story_key({"p100"}, "bihar") != s.story_key({"p100"}, "odisha"), True)
+check("same figures, same state -> same key",
+      s.story_key({"p100"}, "bihar"), s.story_key({"p100"}, "bihar"))
+check("figure order does not matter",
+      s.story_key({"p100", "e200"}, "bihar"), s.story_key({"e200", "p100"}, "bihar"))
+check("no figures -> no key, never suppressed", s.story_key(set(), "bihar"), "")
+check("no figures is never 'seen recently'", s.seen_recently(set(), "bihar"), False)
+
+s.record_story({"fingerprint": {"p100"}, "state": "bihar",
+                "title": "Bihar 100 MW solar", "url": "http://a"})
+check("a repeat in the same state is suppressed",
+      s.seen_recently({"p100"}, "bihar"), True)
+check("the same figure elsewhere still gets through",
+      s.seen_recently({"p100"}, "odisha"), False)
+check("a different figure in the same state gets through",
+      s.seen_recently({"p250"}, "bihar"), False)
+
+print("\n=== markup must not be matched as text ===")
+os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
+s = load()
+
+# Live bug: every Saur article carried <a href=".../solar-energy-news/...">, and
+# flatten() turns that into the word "solar" - so wind and data-centre stories
+# sailed through a gate that exists to keep them out.
+_wind = ("IWTMA Flags State-Level Bottlenecks to Wind Growth Target "
+         '<a href="https://www.saurenergy.com/solar-energy-news/ayana">more</a>')
+check("raw markup would have matched", s.matches_topic(_wind), True)
+check("stripped markup does not", s.matches_topic(s.strip_html(_wind)), False)
+check("strip_html drops tags",
+      s.strip_html("<p>Wind news.</p><a href='x/solar-energy-news/y'>more</a>").strip(),
+      "Wind news. more")
+check("strip_html decodes entities",
+      s.strip_html("Tata&nbsp;Power &amp; BESS").strip(), "Tata Power & BESS")
+# a genuine mention in prose must still count
+check("real prose still matches",
+      s.matches_topic(s.strip_html("<p>NTPC commissions a solar plant.</p>")), True)
+
+print("\n=== one state, or none ===")
+check("headline wins over the body",
+      s.find_state("Bihar tender. Body mentions Odisha and nothing else.",
+                   "Solar tender in Bihar"), "bihar")
+# A round-up naming five states is not news about whichever comes first.
+check("several states in the body -> unclear, not the first one",
+      s.find_state("Rollout across Karnataka, Maharashtra, Bihar and Odisha today."),
+      None)
+check("several states in the headline -> unclear",
+      s.find_state("plant moves", "Plant Shifts from Andhra Pradesh to West Bengal"),
+      None)
+check("exactly one state in the body is used",
+      s.find_state("The project sits in Jharkhand near the border."), "jharkhand")
+check("no state at all -> None", s.find_state("A solar plant was commissioned."), None)
+check("states_in reports them in the order they appear",
+      s.states_in("First Odisha, then Bihar, then Assam."),
+      ["odisha", "bihar", "assam"])
+check("untracked states are ignored",
+      s.find_state("A project in Gujarat and Rajasthan."), None)
+
+print("\n=== a keyword deep in the body is a passing mention ===")
+os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
+s = load()
+
+_lede = "A solar plant was commissioned in Bihar."
+_deep = "A tariff order was issued. " + ("filler text. " * 60) + " mentions solar."
+check("keyword in the headline counts",
+      s.matches_topic(s.topical_text("NTPC commissions solar plant", "")), True)
+check("keyword in the lede counts",
+      s.matches_topic(s.topical_text("Tariff order issued", _lede)), True)
+check("keyword past the lede does not",
+      s.matches_topic(s.topical_text("Tariff order issued", _deep)), False)
+check("the whole body would have matched it",
+      s.matches_topic("Tariff order issued " + _deep), True)
+
+print("\n=== a state in a company name is not a location ===")
+# Live: "MB Power Madhya Pradesh Ltd" in a bidder list filed a national SECI
+# tender under Madhya Pradesh.
+check("bidder name does not set the state",
+      s.find_state("Winners included Rama Reflection Pvt Ltd and "
+                   "MB Power Madhya Pradesh Ltd."), None)
+check("a real location still does",
+      s.find_state("The project sits in Agar Malwa, Madhya Pradesh."), "madhya pradesh")
+check("cue may sit a few words back",
+      s.find_state("A BESS project in Choutuppal, Telangana was announced."), "telangana")
+check("headline still wins without needing a cue",
+      s.find_state("body text", "Madhya Pradesh Ltd wins order"), "madhya pradesh")
+check("states_in without a cue sees every mention",
+      s.states_in("MB Power Madhya Pradesh Ltd"), ["madhya pradesh"])
+check("states_in with a cue rejects the company name",
+      s.states_in("MB Power Madhya Pradesh Ltd", require_cue=True), [])
+# the ambiguity guard must not be weakened by the cue filter
+check("a list of states is still ambiguous",
+      s.find_state("Rollout across Bihar, Odisha and Assam."), None)
+
+print("\n=== the client copy carries no diagnostics ===")
+# The digest is forwarded to a client, so it must never expose infrastructure,
+# costs, file paths, or the fact that a third of the sources are broken.
+os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
+os.environ["TENDERS_ENABLED"] = "1"
+requests.get = _get
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("z1"))
+s_ = load(); SENT.clear(); s_.main()                      # seeds
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("z2"))
+s_ = load(); SENT.clear(); s_.main()
+client = SENT[0]["textContent"]
+
+check("client still gets the news", "BIHAR" in client, True)
+check("client still gets the tenders", "TENDERS & GOVT NOTICES" in client, True)
+for leak in ("Feeds:", "LLM calls", "scrapes:", "Storage:", "portal error",
+             "Deferred", "story(ies) after dedup", "STORAGE PROBLEM",
+             "LLM UNAVAILABLE", "captcha"):
+    check("client copy hides %r" % leak, leak in client, False)
+check("no database path leaks", ".db" in client, False)
+
+# ...while the owner's copy keeps every one of them
+own = internal()
+check("owner copy keeps the feed tally", "| Feeds |" in own, True)
+check("owner copy keeps the budget", "| LLM calls |" in own, True)
+check("owner copy keeps the storage line", "Storage" in own, True)
+
+# a seeding run must not explain databases to a client either
+os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("z3"))
+s_ = load(); SENT.clear(); s_.main()
+seed_client = SENT[0]["textContent"]
+check("seeding run says nothing technical to the client",
+      any(w in seed_client for w in ("deployment", "database", "already reviewed")), False)
+check("and still sends something", len(SENT), 1)
+requests.get = _orig_get
+os.environ["TENDERS_ENABLED"] = "0"
 
 print("\n" + ("ALL PASS" if ok else "FAILURES ABOVE"))
 sys.exit(0 if ok else 1)

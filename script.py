@@ -14,19 +14,42 @@ Design rules, in priority order:
 
 import feedparser
 import hashlib
+import html as html_lib
 import json
 import re
 import sqlite3
 import requests
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 from newspaper import Article
 from groq import Groq
 
 import tenders
 
+# Cloudflare bot management answers Python's TLS handshake with
+# "cf-mitigated: challenge" and a 403, whatever User-Agent is sent - the
+# fingerprint gives the client away before a header is read. curl_cffi replays
+# Chrome's actual TLS fingerprint and recovers PV Tech, Energy Storage News and
+# Solar Builder. Optional on purpose: without it those feeds simply stay 403,
+# exactly as they were.
+try:
+    from curl_cffi import requests as impersonator
+except Exception:
+    impersonator = None
+
+# Headlines carry rupee signs, en-dashes and Indic script. A Windows console
+# defaults to cp1252, where printing any of them raises UnicodeEncodeError and
+# kills the run on the final print - after every feed has been fetched and the
+# digest built. Railway's console is UTF-8 already, so this only ever helps.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding='utf-8', errors='replace')
+    except (AttributeError, ValueError):      # not a real console; nothing to do
+        pass
+
 # ---------------- CONFIG ----------------
-with open("config.json") as f:
+with open("config.json", encoding="utf-8") as f:
     config = json.load(f)
 
 SITES = config["sites"]
@@ -61,6 +84,24 @@ EMAIL_TO = os.getenv("EMAIL_TO")
 EMAIL_BCC = os.getenv("EMAIL_BCC")
 SENDER_EMAIL = os.getenv("SENDER_EMAIL", "princepritish26@gmail.com")
 
+# Every run writes the digest to this file as Markdown. Set REPORT_PATH= (empty)
+# to turn it off.
+REPORT_PATH = os.getenv("REPORT_PATH", "report.md")
+
+# The report goes to the client, so it carries no diagnostics: no feed or portal
+# errors, no LLM or scrape counts, no database path, no explanation of why the
+# history was empty. Those exist for the owner and live in the internal copy and
+# in the run log, which is where the "silence means the cron broke" signal is
+# actually read from.
+# Off by default: the same diagnostics are printed to the run log every run,
+# so writing a second file earns nothing. Set a path if you want one.
+INTERNAL_REPORT_PATH = os.getenv("INTERNAL_REPORT_PATH", "")
+
+# With email off the report file IS the delivery, so the run marks its news seen
+# once the file is written. With email on nothing changes: news is marked only
+# after Brevo accepts it, because otherwise a failed send silently burns a day.
+EMAIL_ENABLED = os.getenv("EMAIL_ENABLED", "1") == "1"
+
 # Cron runs on Railway share the deployment's filesystem, so a plain relative path
 # persists across runs - that is what the current deployment does and it works. A
 # new *deployment* replaces the filesystem and the history starts empty again;
@@ -78,12 +119,22 @@ MAX_ITEMS_PER_EMAIL = int(os.getenv("MAX_ITEMS_PER_EMAIL", "60"))
 DEDUP_WINDOW_DAYS = int(os.getenv("DEDUP_WINDOW_DAYS", "7"))
 FEED_TIMEOUT = int(os.getenv("FEED_TIMEOUT", "20"))
 
+# How much of a summary counts as the article declaring its subject. A keyword
+# past this point is a passing mention, not what the piece is about.
+LEDE_CHARS = int(os.getenv("LEDE_CHARS", "400"))
+
 # Phase 2 - government tender portals. Off by default so enabling it is a
 # deliberate act; the news digest is unaffected either way.
 TENDERS_ENABLED = os.getenv("TENDERS_ENABLED", "0") == "1"
-MAX_PORTAL_FETCHES = int(os.getenv("MAX_PORTAL_FETCHES", "40"))
+MAX_PORTAL_FETCHES = int(os.getenv("MAX_PORTAL_FETCHES", "60"))
 PORTAL_TIMEOUT = int(os.getenv("PORTAL_TIMEOUT", "25"))
 MAX_TENDERS_PER_EMAIL = int(os.getenv("MAX_TENDERS_PER_EMAIL", "40"))
+PORTAL_WORKERS = int(os.getenv("PORTAL_WORKERS", str(tenders.DEFAULT_WORKERS)))
+# Which portal kinds to read. The GePNIC e-tender portals are captcha-gated, so
+# the readable tenders come from the agency and DISCOM sites; set this to
+# "tender_page,agency,discom" to stop spending requests on the walled ones.
+PORTAL_KINDS = tuple(k.strip() for k in os.getenv(
+    "PORTAL_KINDS", ",".join(tenders.DEFAULT_PORTAL_KINDS)).split(",") if k.strip())
 
 # --- testing switches (all default off, safe to leave unset in production) ---
 # DRY_RUN=1      print the email instead of sending it
@@ -93,13 +144,15 @@ DRY_RUN = os.getenv("DRY_RUN") == "1"
 SKIP_SEEDING = os.getenv("SKIP_SEEDING") == "1"
 ONLY_SITES = int(os.getenv("ONLY_SITES", "0"))
 
-if not GROQ_API_KEY or not BREVO_API_KEY:
-    raise Exception("Missing API keys")
-if not EMAIL_TO:
-    raise Exception("EMAIL_TO not set")
+if not GROQ_API_KEY:
+    raise Exception("Missing GROQ_API_KEY")
+if EMAIL_ENABLED and not BREVO_API_KEY:
+    raise Exception("Missing BREVO_API_KEY (set EMAIL_ENABLED=0 for report-only)")
+if EMAIL_ENABLED and not EMAIL_TO:
+    raise Exception("EMAIL_TO not set (set EMAIL_ENABLED=0 for report-only)")
 
-TO_EMAILS = [e.strip() for e in EMAIL_TO.split(",") if e.strip()]
-if not TO_EMAILS:
+TO_EMAILS = [e.strip() for e in (EMAIL_TO or "").split(",") if e.strip()]
+if EMAIL_ENABLED and not TO_EMAILS:
     raise Exception("EMAIL_TO contained no usable addresses")
 
 BCC_EMAILS = [EMAIL_BCC.strip()] if EMAIL_BCC and EMAIL_BCC.strip() else []
@@ -316,13 +369,105 @@ def matches_topic(text):
     return any(keyword in flat for keyword in FLAT_KEYWORDS)
 
 
-def find_state(text):
+TAG_RE = re.compile(r"<[^>]+>")
+
+
+def strip_html(text):
+    """Plain text out of an RSS summary.
+
+    Feed summaries carry markup, and flatten() happily turns a tag into words:
+    <a href="https://www.saurenergy.com/solar-energy-news/..."> flattens to
+    "a href https www saurenergy com solar energy news", so the keyword "solar"
+    matched every article from that publisher no matter what it was about.
+    Measured live, this is what let pure wind and data-centre stories through
+    the gate.
+    """
+    plain = html_lib.unescape(TAG_RE.sub(" ", text or ""))
+    # collapse the runs a stripped tag leaves behind, and the non-breaking
+    # spaces feeds are full of, so downstream text is clean for the LLM too
+    return re.sub(r"\s+", " ", plain).strip()
+
+
+def topical_text(title, desc):
+    """The part of an article a topic decision may be made from.
+
+    The headline and the opening of the summary are where a piece declares what
+    it is about. Further down you find passing mentions - a tariff order that
+    happens to say "solar", a bidder list, a "related articles" tail - and
+    matching those is how a wind tender and a data-centre round-up ended up in a
+    solar digest.
+    """
+    return "%s %s" % (title, (desc or "")[:LEDE_CHARS])
+
+
+# Words that mark the next few tokens as a place rather than a name. "MB Power
+# Madhya Pradesh Ltd" is a company; "project in Agar Malwa, Madhya Pradesh" is a
+# location, and only the second says where the work is.
+LOCATION_CUES = {
+    "in", "at", "for", "from", "across", "near", "throughout", "within",
+    "to", "of", "state", "states", "districts", "district", "region",
+}
+CUE_WINDOW = 3
+
+
+def _has_location_cue(flat, start):
+    """True if a location cue sits within CUE_WINDOW words before `start`."""
+    before = flat[:start].split()
+    return any(w in LOCATION_CUES for w in before[-CUE_WINDOW:])
+
+
+def states_in(text, require_cue=False):
+    """Every tracked state named in the text, in the order they appear.
+
+    With require_cue, an occurrence only counts when a location cue precedes it,
+    which is what separates a place from a company name.
+    """
     flat = flatten(text)
+    found = []
     for state, aliases in STATE_ALIASES.items():
-        for name in aliases:
-            if name in flat:
-                return state
-    return None
+        positions = []
+        for alias in aliases:
+            start = flat.find(alias)
+            while start >= 0:
+                if not require_cue or _has_location_cue(flat, start):
+                    positions.append(start)
+                    break
+                start = flat.find(alias, start + 1)
+        if positions:
+            found.append((min(positions), state))
+    return [state for _, state in sorted(found)]
+
+
+def find_state(text, title=None):
+    """The one tracked state an article is about, or None when that is unclear.
+
+    Two rules, both learned from a live run:
+
+    * The headline wins. It names the subject; the body names whatever it
+      mentions in passing.
+    * Naming several states means none of them. A round-up listing "Karnataka,
+      Maharashtra, Gujarat, Rajasthan and Andhra Pradesh" is not Andhra Pradesh
+      news, and neither is a national BESS story that lists five states it
+      operates in. First-match-wins filed exactly those under whichever state
+      the config happened to list first.
+
+    None is not a drop. It falls through to the existing scrape-then-ask-the-LLM
+    path, which is precisely the machinery for "a human would have to read it".
+    """
+    if title:
+        in_title = states_in(title)
+        if len(in_title) == 1:
+            return in_title[0]
+        if len(in_title) > 1:
+            return None
+    # Order matters: ambiguity is judged on every mention, because the cue filter
+    # would hide the later members of a list ("across A, B and C") and make a
+    # round-up look like single-state news. Only once one state is left does the
+    # cue decide whether it is a place or part of a company name.
+    found = states_in(text)
+    if len(found) != 1:
+        return None
+    return found[0] if found[0] in states_in(text, require_cue=True) else None
 
 
 def llm_extract_state(title, content):
@@ -394,22 +539,36 @@ def numeric_fingerprint(text):
     return out
 
 
-def seen_recently(fingerprint):
-    """True only on an exact fingerprint match inside the window.
+def story_key(fingerprint, state):
+    """The identity used to suppress a repeat of the same story.
+
+    Scoped by state as well as by figures. Round capacities repeat constantly -
+    a live run turned up three unrelated 100 MW stories sharing the fingerprint
+    {p100} - and figures alone would let the second one silently suppress the
+    first. Two reports of one event share a state, so scoping costs real dedup
+    nothing and removes a class of false suppression.
+    """
+    if not fingerprint:
+        return ""
+    return "%s|%s" % ((state or "?").lower(), "|".join(sorted(fingerprint)))
+
+
+def seen_recently(fingerprint, state=None):
+    """True only on an exact key match inside the window.
 
     A story with no extractable figures is never suppressed - when unsure, send.
     """
-    if not fingerprint:
+    key = story_key(fingerprint, state)
+    if not key:
         return False
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=DEDUP_WINDOW_DAYS)).isoformat()
     c.execute("SELECT fingerprint FROM stories WHERE first_seen >= ?", (cutoff,))
-    key = "|".join(sorted(fingerprint))
     return any(row[0] == key for row in c.fetchall())
 
 
 def record_story(item):
-    key = "|".join(sorted(item["fingerprint"]))
+    key = story_key(item["fingerprint"], item.get("state"))
     if not key:
         return
     c.execute("INSERT OR IGNORE INTO stories VALUES (?, ?, ?, ?, ?)",
@@ -482,6 +641,15 @@ def process_site(site, seeding):
     try:
         r = requests.get(site["rss"], headers=BROWSER_UA,
                          timeout=FEED_TIMEOUT)
+        if r.status_code == 403 and impersonator is not None:
+            # A bot challenge, not a dead feed. Retry once as a real browser.
+            try:
+                r = impersonator.get(site["rss"], impersonate="chrome",
+                                     timeout=FEED_TIMEOUT)
+                if r.status_code < 400:
+                    print(f"[FEED] {name}: 403 cleared by TLS impersonation")
+            except Exception:
+                pass                      # keep the original 403 below
         if r.status_code >= 400:
             feed_errors.append(f"{name} (HTTP {r.status_code})")
             return matches
@@ -498,7 +666,7 @@ def process_site(site, seeding):
     for entry in feed.entries[:MAX_ENTRIES_PER_SITE]:
         title = (entry.get("title") or "").strip()
         url = (entry.get("link") or "").strip()
-        desc = entry.get("summary") or ""
+        desc = strip_html(entry.get("summary") or "")
 
         if not url or already_seen(url):
             continue
@@ -511,11 +679,11 @@ def process_site(site, seeding):
 
         blurb = f"{title} {desc}"
 
-        if not matches_topic(blurb):
+        if not matches_topic(topical_text(title, desc)):
             mark_seen(url)
             continue
 
-        state = find_state(blurb)
+        state = find_state(blurb, title)
         content = desc
 
         if not state:
@@ -535,7 +703,7 @@ def process_site(site, seeding):
                 budget.deferred += 1     # transient failure stays retryable
                 continue
 
-            state = find_state(content)
+            state = find_state(content, title)
 
             if not state:
                 if not budget.can_call_llm():
@@ -598,7 +766,8 @@ def gather_tenders():
             return [], ["sources.json empty or unreadable"]
 
         found, errors = tenders.collect(
-            sources, TENDER_KEYWORDS, MAX_PORTAL_FETCHES, PORTAL_TIMEOUT)
+            sources, TENDER_KEYWORDS, MAX_PORTAL_FETCHES, PORTAL_TIMEOUT,
+            portal_kinds=PORTAL_KINDS, workers=PORTAL_WORKERS)
 
         unique, seen_keys = [], set()
         for item in found:
@@ -656,15 +825,167 @@ def send_email(subject, body):
         return False
 
 
-def build_email(clusters, reviewed, seeding, tender_items=None, tender_errors=None):
+
+def _group_errors(errors):
+    """Collapse "State Portal (reason)" lines into one line per reason.
+
+    Eighteen consecutive "captcha-gated" lines bury the one genuine failure
+    underneath them, which is the opposite of what a health section is for.
+    """
+    from collections import OrderedDict
+    grouped = OrderedDict()
+    for err in errors:
+        match = re.search(r"\(([^)]*)\)\s*$", err)
+        reason = match.group(1) if match else "other"
+        grouped.setdefault(reason, []).append(re.sub(r"\s*\([^)]*\)\s*$", "", err))
+    return grouped
+
+
+def build_report(clusters, reviewed, seeding, tender_items=None,
+                 tender_errors=None, diagnostics=True):
+    """The digest as a standalone Markdown document.
+
+    Same data as the email, laid out to be read as a file: links are real links,
+    the run's health is a section rather than a footer, and repeated portal
+    failures are grouped instead of listed one per line.
+    """
+    tender_items = tender_items or []
+    tender_errors = tender_errors or []
+    now = datetime.now(timezone(timedelta(hours=5, minutes=30)))
+
+    out = ["# Solar & BESS Daily", ""]
+    out.append("*%s · %d story(ies) from %d feed(s)*"
+               % (now.strftime("%d %b %Y, %H:%M IST"), len(clusters), len(SITES)))
+    out.append("")
+
+    if diagnostics:
+        for warning in (storage_warning, model_warning):
+            if warning:
+                out += ["> **%s**" % warning, ""]
+
+    if seeding and diagnostics:
+        out += [
+            "## Seeding run — no news listed", "",
+            "History was empty when this run started, so everything the feeds are "
+            "currently carrying has been recorded as already reviewed. "
+            "From the next run you get only genuinely new items.", "",
+            "%d article(s) across %d feed(s) were recorded. This happens on the "
+            "first run, and again after a deployment replaces the container "
+            "filesystem." % (seen_count(), len(SITES)), "",
+        ]
+    elif seeding:
+        # Nothing about databases or deployments: from the client's side this is
+        # simply a day with nothing to report.
+        out += ["## News", "", "No new items today.", ""]
+    elif not clusters:
+        out += ["## News", "", "No new matching news today.", ""]
+    else:
+        out += ["## News", ""]
+        by_state = {}
+        for cluster in clusters:
+            by_state.setdefault(cluster["state"], []).append(cluster)
+
+        n = 0
+        for state, entries in sorted(by_state.items()):
+            out += ["### %s" % state.title(), ""]
+            for cluster in entries:
+                n += 1
+                out.append("%d. **[%s](%s)**" % (n, cluster["title"], cluster["url"]))
+                sources = sorted({s for s in cluster["sources"]})
+                if len(sources) > 1:
+                    out.append("   %s — also covered by %s"
+                               % (sources[0], ", ".join(sources[1:])))
+                else:
+                    out.append("   %s" % sources[0])
+                out.append("")
+
+    if TENDERS_ENABLED and not seeding:
+        out += ["## Tenders & government notices", ""]
+        if not tender_items:
+            out += ["No new tenders matched today.", ""]
+        else:
+            by_state = {}
+            for item in tender_items[:MAX_TENDERS_PER_EMAIL]:
+                by_state.setdefault(item["state"], []).append(item)
+            t = 0
+            for state, entries in sorted(by_state.items()):
+                out += ["### %s" % state.title(), ""]
+                for item in entries:
+                    t += 1
+                    out.append("%d. **[%s](%s)**" % (t, item["title"], item["url"]))
+                    out.append("   %s — %s" % (item["portal"], item["source"]))
+                    out.append("")
+            if len(tender_items) > MAX_TENDERS_PER_EMAIL:
+                out += ["*...and %d more not shown.*"
+                        % (len(tender_items) - MAX_TENDERS_PER_EMAIL), ""]
+
+    if not diagnostics:
+        return "\n".join(out) + "\n"
+
+    # ---- health ----
+    # A quiet failure has to look different from a slow news day, so this stays
+    # in the internal report even when everything worked.
+    out += ["## Run health", ""]
+    out += ["| | |", "|---|---|"]
+    out.append("| Articles reviewed | %d |" % reviewed)
+    out.append("| Stories after dedup | %d |" % len(clusters))
+    out.append("| Feeds | %d ok, %d failed |"
+               % (len(SITES) - len(feed_errors), len(feed_errors)))
+    out.append("| LLM calls | %d / %d |" % (budget.llm_calls, MAX_LLM_CALLS_PER_RUN))
+    out.append("| Scrapes | %d / %d |" % (budget.scrapes, MAX_SCRAPES_PER_RUN))
+    if budget.deferred:
+        out.append("| Deferred to next run | %d |" % budget.deferred)
+    if TENDERS_ENABLED:
+        out.append("| Tenders | %d new, %d portal error(s) |"
+                   % (len(tender_items), len(tender_errors)))
+    out.append("| Storage | `%s`, %d article(s) on record |" % (DB_PATH, seen_count()))
+    out.append("")
+
+    if feed_errors:
+        out += ["### Feeds that failed", ""]
+        for err in feed_errors:
+            out.append("- %s" % err)
+        out.append("")
+
+    if tender_errors:
+        out += ["### Portals that returned nothing", ""]
+        for reason, names in _group_errors(tender_errors).items():
+            out.append("- **%s** (%d): %s" % (reason, len(names), ", ".join(names)))
+        out.append("")
+
+    return "\n".join(out) + "\n"
+
+
+def write_report(body, path=None):
+    """Write a Markdown report. Returns True only if the file is really there."""
+    path = REPORT_PATH if path is None else path
+    if not path:
+        return False
+    try:
+        directory = os.path.dirname(path)
+        if directory and not os.path.isdir(directory):
+            os.makedirs(directory, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(body)
+        print("[REPORT] %s (%d bytes)" % (path, len(body.encode("utf-8"))))
+        return True
+    except Exception as e:
+        print("[REPORT ERROR] %s: %s" % (type(e).__name__, e))
+        return False
+
+def build_email(clusters, reviewed, seeding, tender_items=None,
+                tender_errors=None, diagnostics=True):
     today = datetime.now(timezone(timedelta(hours=5, minutes=30))).strftime("%d %b %Y")
     lines = [f"SOLAR & BESS DAILY — {today}", ""]
 
-    for warning in (storage_warning, model_warning):
-        if warning:
-            lines += ["!" * 60, warning, "!" * 60, ""]
+    if diagnostics:
+        for warning in (storage_warning, model_warning):
+            if warning:
+                lines += ["!" * 60, warning, "!" * 60, ""]
 
-    if seeding:
+    if seeding and not diagnostics:
+        lines += ["No new items today.", ""]
+    elif seeding:
         lines += [
             "History was empty at the start of this run, so no news is listed.",
             "",
@@ -729,6 +1050,9 @@ def build_email(clusters, reviewed, seeding, tender_items=None, tender_errors=No
                 lines += [f"...and {len(tender_items) - MAX_TENDERS_PER_EMAIL} "
                           f"more not shown", ""]
 
+    if not diagnostics:
+        return "\n".join(lines)
+
     # Health footer: makes a quiet failure visible instead of looking like a slow
     # news day.
     lines += ["-" * 60]
@@ -780,7 +1104,7 @@ def main():
     # Cross-run: drop stories whose exact figures were already sent this week.
     fresh = []
     for item in collected:
-        if seen_recently(item["fingerprint"]):
+        if seen_recently(item["fingerprint"], item.get("state")):
             print(f"[DEDUP] Already sent: {item['title'][:60]}")
             continue
         fresh.append(item)
@@ -805,21 +1129,48 @@ def main():
     if not seeding:
         tender_items, tender_errors = gather_tenders()
 
-    body = build_email(clusters, reviewed, seeding, tender_items, tender_errors)
-    print("\n" + body + "\n")
+    # What the client receives: no diagnostics anywhere in it.
+    body = build_email(clusters, reviewed, seeding, tender_items, tender_errors,
+                       diagnostics=False)
 
-    if send_email(f"Solar & BESS Daily — {len(clusters)} story(ies)", body):
-        # Everything is recorded only after Brevo accepts the email. A failed send
-        # must leave the day's news untouched so the next run picks it up again.
+    # What the owner reads. Printed rather than sent, so the run log keeps the
+    # "silence means the cron broke" signal even though the client never sees it.
+    print("\n" + build_email(clusters, reviewed, seeding, tender_items,
+                             tender_errors, diagnostics=True) + "\n")
+
+    report_written = write_report(
+        build_report(clusters, reviewed, seeding, tender_items, tender_errors,
+                     diagnostics=False))
+    write_report(
+        build_report(clusters, reviewed, seeding, tender_items, tender_errors,
+                     diagnostics=True), INTERNAL_REPORT_PATH)
+
+    if EMAIL_ENABLED:
+        delivered = send_email(
+            f"Solar & BESS Daily — {len(clusters)} story(ies)", body)
+    else:
+        # Report-only: the file on disk is the delivery, so it decides.
+        delivered = report_written
+        print("[SYSTEM] EMAIL_ENABLED=0 — report is the delivery "
+              + ("written" if report_written else "FAILED"))
+
+    if delivered:
+        # Recorded only once the digest has actually gone somewhere. A failed
+        # delivery must leave the day's news untouched for the next run.
         for item in collected:
             mark_seen(item["url"])
         for cluster in clusters:
             record_story(cluster)
         for item in tender_items[:MAX_TENDERS_PER_EMAIL]:
             record_tender(item)
+    elif DRY_RUN:
+        # A rehearsal deliberately consumes nothing, so the same articles are
+        # available for the real run. That is not a failure.
+        print(f"[SYSTEM] Dry run — nothing sent, {len(collected)} article(s) "
+              f"left for the next real run")
     else:
-        print(f"[SYSTEM] Send failed — {len(collected)} article(s) left unmarked, "
-              f"will be retried next run")
+        print(f"[SYSTEM] Delivery failed — {len(collected)} article(s) left "
+              f"unmarked, will be retried next run")
 
     print("[SYSTEM] Done")
 

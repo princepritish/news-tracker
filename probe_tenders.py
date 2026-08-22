@@ -121,7 +121,7 @@ def write_report(results, path):
             "menu and the listing sits behind a search form, which needs a portal",
             "specific adapter.", ""]
 
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(out))
 
 

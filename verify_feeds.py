@@ -222,12 +222,12 @@ def write_report(results, path):
         "so a publication that fails here may still work from another network.",
         "",
     ]
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines))
 
 
 def merge_config(results, path="config.json"):
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         config = json.load(fh)
 
     existing = {s["rss"].rstrip("/") for s in config["sites"]}
@@ -242,7 +242,7 @@ def merge_config(results, path="config.json"):
         existing.add(url.rstrip("/"))
         added.append(r["name"])
 
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         json.dump(config, fh, indent=2, ensure_ascii=False)
         fh.write("\n")
     print(f"\n[CONFIG] Added {len(added)} feed(s) to {path}")
@@ -260,7 +260,7 @@ def main():
     ap.add_argument("--merge-config", action="store_true", help="append verified feeds to config.json")
     args = ap.parse_args()
 
-    with open(args.publications) as fh:
+    with open(args.publications, encoding="utf-8") as fh:
         pubs = json.load(fh)["publications"]
 
     if args.only:
@@ -271,7 +271,7 @@ def main():
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         results = sorted(pool.map(probe, pubs), key=lambda r: r["id"])
 
-    with open(args.json_out, "w") as fh:
+    with open(args.json_out, "w", encoding="utf-8") as fh:
         json.dump(results, fh, indent=2, ensure_ascii=False)
         fh.write("\n")
     write_report(results, args.report)

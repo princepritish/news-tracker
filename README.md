@@ -21,12 +21,36 @@ reported as misses rather than silently added to `config.json`.
 Run it from an unrestricted network: sites that block datacenter IP ranges can
 show up as misses even when they do have a working feed.
 
+## Output
+
+The digest is written for a **client**, so it carries no diagnostics: no feed or
+portal errors, no LLM or scrape counts, no database path, no explanation of why
+the history was empty. Just news grouped by state, then tenders grouped by state.
+
+Everything an operator needs is printed to the run log instead, and can also be
+written to a file with `INTERNAL_REPORT_PATH`. That split is deliberate: the
+"silence means the cron broke" signal still exists, it just isn't the client's
+problem.
+
+Email is a second, optional channel. `EMAIL_ENABLED=0` runs report-only and
+needs no Brevo key — which is the working mode while Brevo's IP restriction is
+unresolved. In report-only mode the report file is the delivery, so news is
+marked seen once the file is written; with email on, news is marked seen only
+after Brevo accepts it.
+
 ## Environment variables
 
-- `GROQ_API_KEY`: Groq API key
-- `BREVO_API_KEY`: Brevo API key
-- `EMAIL_TO`: Comma-separated recipient list (must include at least two email IDs)
+- `GROQ_API_KEY`: Groq API key. Required.
+- `EMAIL_ENABLED`: `1` (default) to send email, `0` for report-only
+- `REPORT_PATH`: where to write the client report (default `report.md`)
+- `INTERNAL_REPORT_PATH`: optional second report keeping the diagnostics.
+  Off by default - the same detail is printed to the run log every run.
+- `BREVO_API_KEY`: Brevo API key. Required unless `EMAIL_ENABLED=0`
+- `EMAIL_TO`: Comma-separated recipient list. Required unless `EMAIL_ENABLED=0`
 - `EMAIL_BCC`: Optional single BCC email ID
+- `LEDE_CHARS`: how much of a summary can decide the topic (default `400`).
+  A keyword past this point is treated as a passing mention, which is what
+  keeps bidder lists and "related articles" tails out of the digest.
 
 ## Phase 2 — government tenders
 
@@ -37,6 +61,13 @@ agency and DISCOM for each. Off by default; enable with `TENDERS_ENABLED=1`.
 python probe_tenders.py        # which portals respond, and what they return
 python test_tenders.py         # offline tests, no network
 ```
+
+**The state GePNIC e-tender portals cannot be read.** Probed on 22 Aug 2026:
+every public listing page, the MIS reports site and the national CPPP aggregator
+all put the tender list behind a captcha. There is no non-captcha route, so they
+report `captcha-gated` rather than looking like empty portals. The tenders that
+can be read come from the agency and DISCOM sites, which is why those are read
+by default.
 
 Portals are read by harvesting every link and keeping those whose text matches a
 tender keyword, rather than by parsing each site precisely. Tender titles live in
@@ -56,9 +87,11 @@ section only, never the news digest.
 | Variable | Default | Purpose |
 |---|---|---|
 | `TENDERS_ENABLED` | `0` | `1` switches Phase 2 on |
-| `MAX_PORTAL_FETCHES` | `40` | Portal requests per run |
+| `MAX_PORTAL_FETCHES` | `60` | Portal requests per run (sources.json holds 56) |
 | `PORTAL_TIMEOUT` | `25` | Seconds per portal |
 | `MAX_TENDERS_PER_EMAIL` | `40` | Cap on listed tenders |
+| `PORTAL_WORKERS` | `8` | Portals fetched at once |
+| `PORTAL_KINDS` | `etender,tender_page,agency,discom` | Which portals to read |
 
 ## Testing
 
@@ -67,19 +100,24 @@ Four levels, cheapest first. Nothing below level 3 can reach an inbox.
 **1. Offline suite — no network, no API keys, no cost**
 
 ```bash
-python test_script.py
+python test_script.py     # 44 checks
+python test_tenders.py    # 57 checks
 ```
 
-26 checks covering the normal path plus the failure modes: clustering failure,
-storage failure, dead feeds, no usable model, budget caps. Every case asserts an
-email is still produced.
+Covers the normal path plus the failure modes: clustering failure, storage
+failure, dead feeds, no usable model, budget caps, meta-refresh stubs,
+captcha-gated portals, concurrent portal collection, and the state-scoped
+suppression key. Every case asserts a digest is still produced.
 
 **2. Dry run against live feeds — real data, nothing sent**
 
 ```bash
-export GROQ_API_KEY=... BREVO_API_KEY=... EMAIL_TO=you@example.com
-DRY_RUN=1 SKIP_SEEDING=1 ONLY_SITES=3 python script.py
+export GROQ_API_KEY=...
+EMAIL_ENABLED=0 SKIP_SEEDING=1 ONLY_SITES=3 python script.py
 ```
+
+`EMAIL_ENABLED=0` writes `report.md` and needs no Brevo key. `DRY_RUN=1` also
+prints the email body to stdout instead of sending it.
 
 Prints the exact email to stdout instead of sending it. `SKIP_SEEDING=1` is what
 makes this useful — without it an empty database just seeds and shows no news.
@@ -101,11 +139,19 @@ Confirms Brevo delivery and how the digest actually renders in a mail client.
 Set `DRY_RUN=1` in the service variables and trigger a run manually. The email
 appears in the deploy logs. Remove the variable when you're satisfied.
 
-Feed URLs are checked separately:
+Feed URLs are checked separately. The two scripts answer different questions:
 
 ```bash
-python verify_feeds.py          # which of the 43 actually serve a feed
+python check_config_feeds.py         # are the 43 feeds we actually read alive?
+python check_config_feeds.py --write # repair moved URLs, set verified flags
+python verify_feeds.py               # do the 42 candidate publications have feeds?
 ```
+
+`check_config_feeds.py` re-probes every feed in `config.json`, and when one is
+dead goes looking for a working URL on the same domain before giving up. As of
+22 Aug 2026: 27 of 43 work, 4 URLs were repaired, and the remaining 16 are
+Cloudflare 403s, 404s, or paths that serve HTML rather than a feed. See
+`config_feed_report.md`.
 
 ### Deduplication
 

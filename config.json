@@ -2,51 +2,53 @@
   "sites": [
     {
       "name": "Mercom",
-      "rss": "https://www.mercomindia.com/feed/"
+      "rss": "https://www.mercomindia.com/feed",
+      "verified": true
     },
     {
       "name": "JMK",
-      "rss": "https://jmkresearch.com/feed/"
+      "rss": "https://jmkresearch.com/feed/",
+      "verified": false
     },
     {
       "name": "EQ – The Leading Solar Magazine",
       "rss": "https://www.eqmagpro.com/feed/",
-      "verified": false
+      "verified": true
     },
     {
       "name": "SolarQuarter",
       "rss": "https://solarquarter.com/feed/",
-      "verified": false
+      "verified": true
     },
     {
       "name": "Saur International Energy",
-      "rss": "https://www.saurenergy.com/feed/",
-      "verified": false
+      "rss": "https://www.saurenergy.com/rss",
+      "verified": true
     },
     {
       "name": "pv magazine India",
       "rss": "https://www.pv-magazine-india.com/feed/",
-      "verified": false
+      "verified": true
     },
     {
       "name": "Renewable Watch",
       "rss": "https://renewablewatch.in/feed/",
-      "verified": false
+      "verified": true
     },
     {
       "name": "Energetica India",
-      "rss": "https://www.energetica-india.net/feed/",
-      "verified": false
+      "rss": "https://www.energetica-india.net/rss.xml",
+      "verified": true
     },
     {
       "name": "Renewable Affairs",
       "rss": "https://renewableaffairs.com/feed/",
-      "verified": false
+      "verified": true
     },
     {
       "name": "Renewable Mirror",
       "rss": "https://www.renewablemirror.com/feed/",
-      "verified": false
+      "verified": true
     },
     {
       "name": "Energy Next",
@@ -61,7 +63,7 @@
     {
       "name": "Solar Power World",
       "rss": "https://www.solarpowerworldonline.com/feed/",
-      "verified": false
+      "verified": true
     },
     {
       "name": "Renewable Energy Magazine",
@@ -71,7 +73,7 @@
     {
       "name": "Solar Magazine",
       "rss": "https://solarmagazine.com/feed/",
-      "verified": false
+      "verified": true
     },
     {
       "name": "Solar Builder Magazine",
@@ -80,13 +82,13 @@
     },
     {
       "name": "PHOTON International",
-      "rss": "https://www.photon.com/feed/",
-      "verified": false
+      "rss": "https://www.photon.com/rss.xml",
+      "verified": true
     },
     {
       "name": "Solar Energy International",
       "rss": "https://www.solarenergy.org/feed/",
-      "verified": false
+      "verified": true
     },
     {
       "name": "Renewable Energy World",
@@ -96,12 +98,12 @@
     {
       "name": "Electrical India",
       "rss": "https://www.electricalindia.in/feed/",
-      "verified": false
+      "verified": true
     },
     {
       "name": "Power Line",
       "rss": "https://powerline.net.in/feed/",
-      "verified": false
+      "verified": true
     },
     {
       "name": "Electrical Mirror",
@@ -111,23 +113,23 @@
     {
       "name": "Electrical & Power Review",
       "rss": "https://www.eprmagazine.com/feed/",
-      "verified": false
+      "verified": true
     },
     {
       "name": "Power Review",
       "rss": "https://www.powerreviews.com/feed/",
-      "verified": false,
+      "verified": true,
       "note": "powerreviews.com is PowerReviews, a US product-ratings SaaS vendor - not a power-sector trade magazine. Likely a wrong URL for the intended publication."
     },
     {
       "name": "India Power Monitor",
       "rss": "https://indiapowermonitor.com/feed/",
-      "verified": false
+      "verified": true
     },
     {
       "name": "T&D India",
       "rss": "https://www.tndindia.com/feed/",
-      "verified": false
+      "verified": true
     },
     {
       "name": "Power Engineering",
@@ -153,7 +155,7 @@
     {
       "name": "Battery Power Online",
       "rss": "https://www.batterypoweronline.com/feed/",
-      "verified": false
+      "verified": true
     },
     {
       "name": "Battery Industry",
@@ -173,7 +175,7 @@
     {
       "name": "ESS News",
       "rss": "https://www.ess-news.com/feed/",
-      "verified": false
+      "verified": true
     },
     {
       "name": "Construction World",
@@ -183,12 +185,12 @@
     {
       "name": "Infrastructure Today",
       "rss": "https://infrastructuretoday.co.in/feed/",
-      "verified": false
+      "verified": true
     },
     {
       "name": "Indian Infrastructure",
       "rss": "https://indianinfrastructure.com/feed/",
-      "verified": false
+      "verified": true
     },
     {
       "name": "Equipment India",
@@ -198,12 +200,12 @@
     {
       "name": "Smart Utilities",
       "rss": "https://smartutilities.net.in/feed/",
-      "verified": false
+      "verified": true
     },
     {
       "name": "Energy Manager Magazine",
       "rss": "https://www.energymanagermagazine.co.uk/feed/",
-      "verified": false
+      "verified": true
     },
     {
       "name": "Energy Industry Review",

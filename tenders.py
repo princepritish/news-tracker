@@ -15,6 +15,21 @@ these portals live in link text, so this survives layout changes, works on
 platforms nobody has adapted yet, and degrades to "found nothing" rather than to
 a crash. Precision can be added per portal later using probe_tenders.py output.
 
+What the portals actually turned out to be
+------------------------------------------
+Probed for real on 22 Aug 2026; see portal_report.md. The GePNIC e-tender
+portals — every state one in sources.json — put their whole public tender list
+behind a captcha, on every listing page alike: Active Tenders, Tenders by
+Closing Date, by Organisation, by Location, by Classification, and the national
+CPPP aggregator too. No amount of link harvesting reaches them, so they are
+reported as "captcha-gated" rather than as an empty portal, and the remaining
+candidate URLs for that host are abandoned instead of costing more requests.
+
+The agency and DISCOM sites are where the readable tenders actually are, which
+is why they are read by default. Their pages also carry standing links to
+consumer schemes ("Apply for Rooftop Solar"); those match the keywords once,
+are reported once, and are then suppressed forever by the portal+title key.
+
 Isolation rules, since this must never damage the news digest:
   * every portal is wrapped individually - one failure is recorded, not raised
   * a global cap bounds total fetches per run
@@ -22,8 +37,10 @@ Isolation rules, since this must never damage the news digest:
     the Groq budget
 """
 
+import html
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -37,6 +54,67 @@ LINK_RE = re.compile(r'<a\b[^>]*href\s*=\s*["\']([^"\']+)["\'][^>]*>(.*?)</a>',
 TAG_RE = re.compile(r"<[^>]+>")
 WS_RE = re.compile(r"\s+")
 
+META_TAG_RE = re.compile(r"<meta\b[^>]*>", re.I)
+REFRESH_RE = re.compile(r"""http-equiv\s*=\s*["']?\s*refresh""", re.I)
+CONTENT_RE = re.compile(r"""content\s*=\s*["']([^"']*)["']""", re.I)
+CONTENT_URL_RE = re.compile(r"""url\s*=\s*["']?([^"'\s]+)""", re.I)
+
+# GePNIC renders its captcha inline on the listing page itself, so its presence
+# in the markup is what separates "walled off" from "nothing listed today".
+CAPTCHA_RE = re.compile(r"captcha", re.I)
+
+# Agency and DISCOM sites carry the tenders that are actually readable. The
+# e-tender portals stay in the walk so their captcha wall keeps showing up in
+# the health footer instead of being quietly forgotten.
+DEFAULT_PORTAL_KINDS = ("etender", "tender_page", "agency", "discom")
+
+# Portals are independent and nearly all the time is spent waiting on them, so
+# they are fetched in parallel. Serially, 56 portals against a 25s timeout is a
+# worst case of over twenty minutes - on a metered host that is the whole cost
+# of the run.
+DEFAULT_WORKERS = 8
+
+# A keyword match is necessary but not sufficient. DISCOM and agency sites carry
+# standing links to consumer schemes - "Net Metering (Solar)", "PM Suryaghar
+# Solar Registration", "Name Change for Solar" - which match the tender keywords
+# exactly as well as a tender does. On a live first run they outnumbered genuine
+# tenders 39 to 1 and filled the whole report.
+#
+# What separates them is wording and length: procurement notices name the act of
+# procuring, and their titles are long (median 250 characters against 27 for the
+# scheme links). Either signal is enough, so a terse "PPA for 10MW solar" is kept
+# while "Solar Related" is not.
+TENDER_VOCAB_RE = re.compile(
+    r"\b(tenders?|bids?|bidding|rfq|rfp|eoi|nit|quotations?|empanel\w*|supply|"
+    r"installation|erection|commissioning|construction|procurement|contract|"
+    r"auction|corrigend\w*|ppa|invit\w+|expression of interest)\b", re.I)
+
+MIN_TENDER_TITLE = 60
+
+# Length alone lets two kinds of long non-tender through, and both looked bad in
+# a client-facing digest: recruitment notices ("Appointment to the post of
+# Member (Renewable Energy)...") and the site's own masthead link ("Uttar Pradesh
+# New & Renewable Energy Development Agency, Department of ... Government of
+# Uttar Pradesh"). Neither is procurement.
+NOT_A_TENDER_RE = re.compile(
+    r"\b(appointment to the post|recruitment|vacanc\w+|walk[- ]in interview|"
+    r"applications? are invited for the post|constituent organisation|"
+    r"department of additional sources)\b", re.I)
+
+# A masthead link names the body and its parent government, and nothing else.
+ORG_NAME_RE = re.compile(
+    r"(development agency|regulatory commission|nigam|corporation)\b[^.]{0,80}"
+    r"\b(government of|govt\.? of|department of)\b", re.I)
+
+
+
+def looks_like_tender(text):
+    """True if the anchor text reads like a procurement notice, not a menu item."""
+    if NOT_A_TENDER_RE.search(text) or ORG_NAME_RE.search(text):
+        return False
+    return bool(TENDER_VOCAB_RE.search(text)) or len(text) >= MIN_TENDER_TITLE
+
+
 # Junk that appears as links on every government portal.
 NAV_NOISE = {
     "home", "login", "contact us", "help", "sitemap", "search", "back",
@@ -48,7 +126,31 @@ NAV_NOISE = {
 
 
 def clean_text(html_fragment):
-    return WS_RE.sub(" ", TAG_RE.sub(" ", html_fragment)).strip()
+    """Anchor text with tags stripped and entities decoded.
+
+    Portals emit raw entities inside link text, so without unescaping a title
+    reaches the report as "&nbsp;&nbsp;Seeking consent for procurement".
+    """
+    return WS_RE.sub(" ", html.unescape(TAG_RE.sub(" ", html_fragment))).strip()
+
+
+def meta_refresh_target(html, base_url):
+    """The URL a <meta http-equiv="refresh"> stub points at, or None.
+
+    requests follows HTTP redirects but not this one, and several GePNIC
+    portals serve nothing else - a two-line page that harvests as zero links
+    and is indistinguishable from a portal with nothing on it.
+    """
+    for tag in META_TAG_RE.findall(html or ""):
+        if not REFRESH_RE.search(tag):
+            continue
+        content = CONTENT_RE.search(tag)
+        if not content:
+            continue
+        target = CONTENT_URL_RE.search(content.group(1))
+        if target:
+            return urljoin(base_url, target.group(1))
+    return None
 
 
 def build_matcher(keywords):
@@ -64,7 +166,7 @@ def build_matcher(keywords):
         if not kw:
             continue
         if len(kw) <= 4 and " " not in kw:
-            patterns.append(re.compile(rf"\b{re.escape(kw)}\b"))
+            patterns.append(re.compile(r"\b" + re.escape(kw) + r"\b"))
         else:
             patterns.append(re.compile(re.escape(kw)))
 
@@ -98,30 +200,61 @@ def gepnic_candidates(url):
     instead of navigation.
     """
     parsed = urlparse(url)
-    root = f"{parsed.scheme}://{parsed.netloc}"
+    root = "%s://%s" % (parsed.scheme, parsed.netloc)
     app = "/nicgep/app" if "nicgep" in url or parsed.netloc.endswith("tenders.gov.in") else None
     if not app:
         return []
     return [
-        f"{root}{app}?page=FrontEndLatestActiveTenders&service=page",
-        f"{root}{app}?page=FrontEndAdvancedSearch&service=page",
+        "%s%s?page=FrontEndLatestActiveTenders&service=page" % (root, app),
+        "%s%s?page=FrontEndAdvancedSearch&service=page" % (root, app),
     ]
+
+
+# Several state portals present an expired or incomplete certificate chain and
+# fail the handshake outright. They serve public tender listings and we send no
+# credentials to them, so rather than write them off they are retried once with
+# verification disabled - which recovers Andhra Pradesh REDA, Madhya Pradesh
+# DISCOM, Sikkim DISCOM and the Bihar e-tender portal. Verified HTTPS is always
+# tried first, and this never applies to anything but these public pages.
+TLS_FAILURES = ("SSLError", "ConnectionError")
 
 
 def fetch_portal(portal, state, matches, timeout, session=None):
     """Read one portal. Returns (items, error_string_or_None) - never raises."""
-    get = (session or requests).get
+    raw_get = (session or requests).get
+
+    def get(url, **kw):
+        try:
+            return raw_get(url, **kw)
+        except Exception as e:
+            if type(e).__name__ not in TLS_FAILURES or kw.get("verify") is False:
+                raise
+            return raw_get(url, verify=False, **kw)
     urls = gepnic_candidates(portal["url"]) + [portal["url"]]
     last_error = None
+    followed = set()
 
-    for url in urls:
+    while urls:
+        url = urls.pop(0)
         try:
             r = get(url, headers=UA, timeout=timeout)
             if r.status_code >= 400:
-                last_error = f"HTTP {r.status_code}"
+                last_error = "HTTP %s" % r.status_code
                 continue
 
-            html = r.text
+            html = r.text or ""
+
+            # A meta-refresh stub carries no links at all. Follow it once per
+            # target so a redirecting portal gets read rather than written off.
+            hop = meta_refresh_target(html, url)
+            if hop and hop not in followed:
+                followed.add(hop)
+                urls.insert(0, hop)
+                last_error = "meta-refresh not followed"
+                continue
+
+            on_topic = [(text, link) for text, link in harvest_links(html, url)
+                        if matches(text)]
             hits = [
                 {
                     "title": text,
@@ -130,12 +263,26 @@ def fetch_portal(portal, state, matches, timeout, session=None):
                     "portal": portal["label"],
                     "source": urlparse(url).netloc,
                 }
-                for text, link in harvest_links(html, url)
-                if matches(text)
+                for text, link in on_topic
+                if looks_like_tender(text)
             ]
             if hits:
                 return hits, None
-            last_error = "no matching tenders"
+
+            # Distinguish three different nothings, because they need different
+            # responses. A page that yielded on-topic links but no procurement
+            # wording was read fine and simply has no tenders today - saying
+            # "captcha-gated" there sends you hunting for a wall that isn't
+            # there. Several DISCOM sites carry a login captcha in the page
+            # furniture while their content reads perfectly.
+            if on_topic:
+                last_error = "no tender-like listings"
+            elif CAPTCHA_RE.search(html):
+                # A real wall: nothing on-topic came back and a captcha guards
+                # the list. No point spending the remaining candidate requests.
+                return [], "captcha-gated, needs a browser"
+            else:
+                last_error = "no matching tenders"
         except Exception as e:
             last_error = type(e).__name__
 
@@ -150,42 +297,62 @@ def tender_key(item):
     every single day. Portal plus normalised title is stable.
     """
     title = WS_RE.sub(" ", re.sub(r"[^a-z0-9 ]+", " ", item["title"].lower())).strip()
-    return f"{item['source']}|{title}"
+    return "%s|%s" % (item["source"], title)
 
 
 def collect(sources, keywords, max_fetches, timeout=25, session=None,
-            portal_kinds=("etender", "tender_page")):
+            portal_kinds=DEFAULT_PORTAL_KINDS, workers=DEFAULT_WORKERS):
     """Walk every configured portal within the fetch budget.
 
-    Returns (items, errors). Only e-tender and dedicated tender pages are read by
-    default - agency and DISCOM home pages are mostly navigation and rarely worth
-    a request.
+    Returns (items, errors). Portals are fetched concurrently but chosen and
+    reported in configuration order, so the digest reads the same way whatever
+    order the network happens to answer in.
     """
     matches = build_matcher(keywords)
-    items, errors, fetches = [], [], 0
+    jobs, errors, budget_hit = [], [], None
 
     for source in sources:
         for portal in source["portals"]:
             if portal["kind"] not in portal_kinds:
                 continue
-            if fetches >= max_fetches:
-                errors.append(f"{source['state']}: fetch budget reached")
-                return items, errors
+            if len(jobs) >= max_fetches:
+                if budget_hit is None:
+                    budget_hit = source["state"]
+                continue
+            jobs.append((source["state"], portal))
 
-            fetches += 1
-            found, error = fetch_portal(portal, source["state"], matches,
-                                        timeout, session)
-            if error and not found:
-                errors.append(f"{source['state']} {portal['label']} ({error})")
-            items.extend(found)
+    if budget_hit is not None:
+        errors.append("%s: fetch budget reached" % budget_hit)
+
+    if not jobs:
+        return [], errors
+
+    def run(job):
+        state, portal = job
+        try:
+            return fetch_portal(portal, state, matches, timeout, session)
+        except Exception as e:                      # belt and braces
+            return [], type(e).__name__
+
+    if workers and workers > 1 and len(jobs) > 1:
+        with ThreadPoolExecutor(max_workers=min(workers, len(jobs))) as pool:
+            results = list(pool.map(run, jobs))
+    else:
+        results = [run(job) for job in jobs]
+
+    items = []
+    for (state, portal), (found, error) in zip(jobs, results):
+        if error and not found:
+            errors.append("%s %s (%s)" % (state, portal["label"], error))
+        items.extend(found)
 
     return items, errors
 
 
 def load_sources(path="sources.json"):
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             return json.load(f)["sources"]
     except Exception as e:
-        print(f"[TENDERS] Could not load {path}: {e}")
+        print("[TENDERS] Could not load %s: %s" % (path, e))
         return []
