@@ -163,6 +163,26 @@ check("llm calls stay at 0", s2.budget.llm_calls, 0)
 check("still sends", len(SENT), 1)
 
 import requests
+print("\n=== send failure must not consume the news ===")
+os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
+os.environ["SKIP_SEEDING"] = "1"
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("f"))
+
+_ok_post = requests.post
+requests.post = lambda url, **k: types.SimpleNamespace(
+    status_code=401, text='{"message":"unrecognised IP"}')
+s_ = load(); s_.main()
+# Off-topic articles are marked immediately - they have been judged and are
+# irrelevant regardless of whether the email goes out. Only *matched* articles
+# wait for a successful send, so the batch's one cricket item is expected here.
+check("matched articles not marked after failed send", s_.seen_count(), 1)
+
+requests.post = _ok_post
+s_ = load(); SENT.clear(); s_.main()
+check("news reappears on next run", "BIHAR" in SENT[0]["textContent"], True)
+check("marked seen after successful send", s_.seen_count() > 0, True)
+os.environ.pop("SKIP_SEEDING", None)
+
 print("\n=== tenders section (Phase 2) ===")
 os.environ["TENDERS_ENABLED"] = "1"
 os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")

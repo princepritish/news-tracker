@@ -119,12 +119,15 @@ print(f"[INIT] TO: {TO_EMAILS} · BCC: {BCC_EMAILS}")
 # and the whole LLM tier goes dead while the run still "succeeds". So ask the API
 # what exists and pick from a preference list.
 FAST_CANDIDATES = [
-    SUMMARY_MODEL, "llama-3.1-8b-instant", "llama-3.3-70b-versatile",
-    "llama3-8b-8192", "gemma2-9b-it", "mixtral-8x7b-32768",
+    SUMMARY_MODEL,
+    "openai/gpt-oss-20b", "llama-3.1-8b-instant", "qwen/qwen3.6-27b",
+    "gemma2-9b-it", "llama3-8b-8192", "openai/gpt-oss-120b",
+    "llama-3.3-70b-versatile", "mixtral-8x7b-32768",
 ]
 STRONG_CANDIDATES = [
-    CLUSTER_MODEL, "llama-3.3-70b-versatile", "llama3-70b-8192",
-    "llama-3.1-8b-instant", "mixtral-8x7b-32768",
+    CLUSTER_MODEL,
+    "openai/gpt-oss-120b", "llama-3.3-70b-versatile", "qwen/qwen3.6-27b",
+    "llama3-70b-8192", "openai/gpt-oss-20b", "llama-3.1-8b-instant",
 ]
 
 
@@ -147,17 +150,26 @@ def resolve_models():
     # and disable the LLM tier while usable models sit in the catalogue, fall back
     # to anything that looks like a chat model - excluding the speech, safety and
     # embedding models, which cannot answer a prompt.
-    NON_CHAT = ("whisper", "tts", "guard", "embed", "moderation", "rerank")
+    # "compound" models are agentic pipelines with built-in tool use, not plain
+    # chat completions - slower and not dependable for strict JSON output, so they
+    # are a last resort rather than a default pick.
+    NON_CHAT = ("whisper", "tts", "guard", "embed", "moderation", "rerank",
+                "orpheus")
+    LAST_RESORT = ("compound",)
 
     def any_chat(prefer_large):
-        chat = sorted(m for m in available
-                      if not any(x in m.lower() for x in NON_CHAT))
+        usable = sorted(m for m in available
+                        if not any(x in m.lower() for x in NON_CHAT))
+        chat = [m for m in usable if not any(x in m.lower() for x in LAST_RESORT)]
+        chat = chat or usable          # only fall back to agentic if nothing else
         if not chat:
             return None
-        large = [m for m in chat if any(s in m.lower() for s in ("70b", "-large", "32b"))]
+        large = [m for m in chat
+                 if any(s in m.lower() for s in ("70b", "120b", "-large", "32b", "27b"))]
         if prefer_large and large:
             return large[0]
-        small = [m for m in chat if any(s in m.lower() for s in ("8b", "9b", "instant", "mini"))]
+        small = [m for m in chat
+                 if any(s in m.lower() for s in ("8b", "9b", "20b", "instant", "mini"))]
         return (small or chat)[0]
 
     fast = pick(FAST_CANDIDATES) or any_chat(prefer_large=False)
@@ -205,6 +217,16 @@ class Budget:
 
 budget = Budget()
 feed_errors = []
+
+# A bare "Mozilla/5.0" is 403'd by Cloudflare and similar front ends, which is
+# what several of these publishers sit behind.
+BROWSER_UA = {
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                   "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
+    "Accept": ("application/rss+xml, application/atom+xml, application/xml;q=0.9, "
+               "text/xml;q=0.9, */*;q=0.8"),
+    "Accept-Language": "en-IN,en;q=0.9",
+}
 
 
 # ---------------- DATABASE ----------------
@@ -458,7 +480,7 @@ def process_site(site, seeding):
     matches = []
 
     try:
-        r = requests.get(site["rss"], headers={"User-Agent": "Mozilla/5.0"},
+        r = requests.get(site["rss"], headers=BROWSER_UA,
                          timeout=FEED_TIMEOUT)
         if r.status_code >= 400:
             feed_errors.append(f"{name} (HTTP {r.status_code})")
@@ -525,7 +547,9 @@ def process_site(site, seeding):
                 mark_seen(url)
                 continue
 
-        mark_seen(url)
+        # NOT marked seen here: if the send fails, an article already recorded as
+        # reviewed would never be looked at again and the news would be lost. The
+        # caller marks these only after Brevo accepts the email.
         matches.append({
             "site": name,
             "title": title,
@@ -785,14 +809,17 @@ def main():
     print("\n" + body + "\n")
 
     if send_email(f"Solar & BESS Daily — {len(clusters)} story(ies)", body):
-        # Only record after a successful send, so a Brevo outage does not silently
-        # consume the day's news.
+        # Everything is recorded only after Brevo accepts the email. A failed send
+        # must leave the day's news untouched so the next run picks it up again.
+        for item in collected:
+            mark_seen(item["url"])
         for cluster in clusters:
             record_story(cluster)
         for item in tender_items[:MAX_TENDERS_PER_EMAIL]:
             record_tender(item)
     else:
-        print("[SYSTEM] Send failed — stories not recorded, will retry next run")
+        print(f"[SYSTEM] Send failed — {len(collected)} article(s) left unmarked, "
+              f"will be retried next run")
 
     print("[SYSTEM] Done")
 
