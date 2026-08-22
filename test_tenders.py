@@ -131,12 +131,12 @@ SOURCES = [{"state": "Bihar", "portals": [portal, dict(portal, label="tender pag
            {"state": "Assam", "portals": [portal]}]
 
 items, errors = tenders.collect(SOURCES, ["solar"], max_fetches=99,
-                                session=FakeSession("ok"))
+                                session=FakeSession("ok"), collapse=False)
 check("collect walks every portal", len(items), 6)
 check("collect reports no errors on success", errors, [])
 
 items, errors = tenders.collect(SOURCES, ["solar"], max_fetches=2,
-                                session=FakeSession("ok"))
+                                session=FakeSession("ok"), collapse=False)
 check("fetch budget is enforced", len(items), 4)
 check("budget exhaustion is reported", any("budget" in e for e in errors), True)
 
@@ -275,7 +275,7 @@ MIXED = [{"state": "Bihar", "portals": [
 ]}]
 
 items, errors = tenders.collect(MIXED, ["solar"], max_fetches=99,
-                                session=FakeSession("ok"))
+                                session=FakeSession("ok"), collapse=False)
 check("reads all four known kinds, skips the unknown", len(items), 6)
 
 items, errors = tenders.collect(MIXED, ["solar"], max_fetches=99,
@@ -460,6 +460,97 @@ check("a job advert is still not a notice",
       tenders.looks_like_tender(
           "Appointment to the post of Member (Renewable Energy) - "
           "applications are invited for the post, as per policy"), False)
+
+print("\n=== one tender linked twice on a page is one tender ===")
+# Live: MSPDCL lists each tender as a clean heading and again as a row of
+# furniture. The portal+title key saw two tenders because the anchor text
+# differed; within a single page the URL settles it.
+TWICE = ("""<html><body>"""
+  """<a href="/t/electrification-off-grid">Electrification of tribal household in """
+  """the state of Manipur through off grid mode under New Solar Power Scheme</a>"""
+  """<a href="/t/electrification-off-grid">gavel 16 Sep 2025 Closed Electrification """
+  """of tribal household in the state of Manipur through off grid mode under New """
+  """Solar Power Scheme Tender Reference No: 2/35 dated 12.09.2025 Read more """
+  """arrow_forward</a>"""
+  """<a href="/t/other">Supply and Installation of 500 kWp Rooftop Solar Plant</a>"""
+  """</body></html>""")
+
+
+class TwiceSession:
+    def get(self, url, **kw):
+        return types.SimpleNamespace(status_code=200, text=TWICE)
+
+
+items, err = tenders.fetch_portal(
+    {"label": "tender page", "url": "https://mspdcl.in/", "kind": "tender_page"},
+    "Manipur", match, 5, session=TwiceSession())
+check("the duplicate link collapses", len(items), 2)
+check("and the clean heading is the one kept",
+      items[0]["title"].startswith("Electrification of tribal household"), True)
+check("the furniture version is dropped",
+      any("arrow_forward" in i["title"] for i in items), False)
+check("the genuinely different tender survives",
+      any("500 kWp" in i["title"] for i in items), True)
+
+# across runs the URL must NOT be the key - GePNIC session ids change
+_a = {"title": "Supply of 500 kWp solar", "source": "x.gov.in",
+      "url": "https://x.gov.in/d?id=1&jsessionid=AAA"}
+_b = {"title": "Supply of 500 kWp solar", "source": "x.gov.in",
+      "url": "https://x.gov.in/d?id=1&jsessionid=BBB"}
+check("a changed session id is still the same tender",
+      tenders.tender_key(_a), tenders.tender_key(_b))
+
+print("\n=== Telangana's wall of look-alike notices ===")
+import datetime as _dt
+_today = _dt.date(2026, 8, 22)
+
+# a dated *event* that has long passed is dead
+check("a 2015 bid archive is stale",
+      tenders.is_stale_archive("Telangana Solar Bid 2015", _today), True)
+check("a 2014 bid archive is stale",
+      tenders.is_stale_archive("Telangana Solar Bid 2014", _today), True)
+# ...but a dated *policy* is the rule still in force
+check("a 2016 policy is not an archive",
+      tenders.is_stale_archive(
+          "MP Policy For Decentralized Renewable Energy System 2016", _today), False)
+check("a 2022 policy is not an archive",
+      tenders.is_stale_archive("UP SOLAR ENERGY POLICY-2022 & GO'S", _today), False)
+check("a recent tender is left alone",
+      tenders.is_stale_archive("Solar Bid 2025", _today), False)
+check("an undated tender is left alone",
+      tenders.is_stale_archive("Tender for solarization of water pumps", _today), False)
+
+# static reference material is not a notice
+for _t in ("Work Flow Chart Under Solar Bidding",
+           "Solar Plant Commissioning Certificate",
+           "Rooftop Solar Calculator", "Solar FAQs"):
+    check("reference page dropped: %s" % _t[:34], tenders.looks_like_tender(_t), False)
+
+# one document mirrored on a state's REDA and DISCOM is one row
+_items = [
+    {"title": "Solar Power Policy", "state": "Telangana", "url": "a", "source": "reda"},
+    {"title": "Telangana State Solar Power Policy", "state": "Telangana",
+     "url": "b", "source": "discom"},
+    {"title": "Seeking consent for procurement of 1500MWh BESS.",
+     "state": "Telangana", "url": "c", "source": "discom"},
+]
+_kept = tenders.collapse_near_duplicates(_items)
+check("the mirrored policy collapses to one", len(_kept), 2)
+check("and the first wording is kept", _kept[0]["title"], "Solar Power Policy")
+check("the unrelated tender survives",
+      any("1500MWh" in i["title"] for i in _kept), True)
+
+# the same wording in a different state is a different document
+_two_states = [
+    {"title": "Solar Power Policy", "state": "Telangana", "url": "a", "source": "x"},
+    {"title": "Solar Power Policy", "state": "Bihar", "url": "b", "source": "y"},
+]
+check("states do not collapse into each other",
+      len(tenders.collapse_near_duplicates(_two_states)), 2)
+
+check("collapsing is on by default, so one state's mirrors merge",
+      len(tenders.collect(MIXED, ["solar"], max_fetches=99,
+                          session=FakeSession("ok"))[0]), 2)
 
 print("\n" + ("ALL PASS" if OK else "FAILURES ABOVE"))
 sys.exit(0 if OK else 1)

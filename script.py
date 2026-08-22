@@ -139,6 +139,13 @@ FEED_TIMEOUT = int(os.getenv("FEED_TIMEOUT", "20"))
 # past this point is a passing mention, not what the piece is about.
 LEDE_CHARS = int(os.getenv("LEDE_CHARS", "400"))
 
+# How much of a scraped article may decide its state. A piece names where the
+# work is in its dateline and opening paragraphs; what sits at the end is the
+# author's biography. "Rooftop Solar after PM Surya Ghar" was filed under Andhra
+# Pradesh because character 6648 of 7896 read "...student at Madanapalle
+# Institute of Technology, Andhra Pradesh".
+BODY_HEAD_CHARS = int(os.getenv("BODY_HEAD_CHARS", "1500"))
+
 # Phase 2 - government tender portals. Always on: tenders are half of what this
 # digest is for. Collection stays wrapped whole, so a portal failing still costs
 # the tender section only and never the news.
@@ -747,7 +754,7 @@ def process_site(site, seeding):
                 budget.deferred += 1     # transient failure stays retryable
                 continue
 
-            state = find_state(content, title)
+            state = find_state(content[:BODY_HEAD_CHARS], title)
 
             if not state:
                 if not budget.can_call_llm():

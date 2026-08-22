@@ -37,8 +37,10 @@ Isolation rules, since this must never damage the news digest:
     the Groq budget
 """
 
+import datetime
 import html
 import json
+import os
 import re
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urljoin, urlparse
@@ -111,6 +113,82 @@ NOTICE_VOCAB_RE = re.compile(
 
 MIN_TENDER_TITLE = 60
 
+# A dated procurement event that has passed is dead; a dated policy is not.
+# "Telangana Solar Bid 2015" is an archive, while "MP Policy for Decentralised
+# Renewable Energy System 2016" is the rule still in force. So a year in the
+# title only disqualifies something that is also an *event* - a bid, tender or
+# auction. Anything within the last couple of years is left alone, because a
+# recent notice may still be open.
+YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
+DATED_EVENT_RE = re.compile(r"\b(bids?|bidding|tenders?|auctions?|rfp|rfq|eoi)\b", re.I)
+STALE_AFTER_YEARS = int(os.environ.get("STALE_AFTER_YEARS", "2"))
+
+
+def is_stale_archive(text, today=None):
+    """True for a procurement event whose title carries a long-past year."""
+    if not DATED_EVENT_RE.search(text):
+        return False
+    years = [int(m.group(0)) for m in YEAR_RE.finditer(text)]
+    if not years:
+        return False
+    this_year = (today or datetime.date.today()).year
+    return max(years) <= this_year - STALE_AFTER_YEARS
+
+
+# Static reference material that lives permanently in a portal's menu. It reads
+# like procurement because it is *about* procurement - a workflow chart for
+# bidding, the certificate you file after commissioning - but nothing is being
+# invited, so it is not a notice.
+REFERENCE_PAGE_RE = re.compile(
+    r"\b(work ?flow|flow chart|certificate|calculator|brochure|"
+    r"proforma|format|check ?list|user manual|help ?file|faqs?|"
+    r"list of empanelled|vendor list|price list|rate list)\b", re.I)
+
+
+def _signature(title, state):
+    """Significant words of a title, ignoring the state's own name.
+
+    Telangana's REDA and DISCOM both link the state solar policy, as "Solar
+    Power Policy" and "Telangana State Solar Power Policy". Those are one
+    document, and a reader seeing both in one digest reads it as noise.
+    """
+    flat = re.sub(r"[^a-z0-9 ]+", " ", title.lower())
+    drop = set(re.sub(r"[^a-z0-9 ]+", " ", (state or "").lower()).split())
+    drop.update(("the", "and", "for", "under", "with", "from", "state"))
+    return frozenset(w for w in flat.split() if len(w) > 3 and w not in drop)
+
+
+def collapse_near_duplicates(items, threshold=0.7):
+    """One entry per document per state.
+
+    A tender is keyed on portal+title on purpose - two portals can genuinely run
+    separate tenders with the same wording. A *notice* is the opposite: the same
+    policy or circular gets mirrored across a state's REDA and DISCOM sites, and
+    keying on the portal turns one document into several rows. Comparing the
+    significant words within a state catches that without touching tenders that
+    merely share a phrase. First seen wins.
+    """
+    kept = []
+    signatures = []
+    for item in items:
+        sig = _signature(item["title"], item.get("state"))
+        if not sig:
+            kept.append(item)
+            continue
+        dup = False
+        for prev_state, prev in signatures:
+            if prev_state != item.get("state"):
+                continue
+            overlap = len(sig & prev) / float(len(sig | prev))
+            if overlap >= threshold:
+                dup = True
+                break
+        if not dup:
+            signatures.append((item.get("state"), sig))
+            kept.append(item)
+    return kept
+
+
 # Length alone lets two kinds of long non-tender through, and both looked bad in
 # a client-facing digest: recruitment notices ("Appointment to the post of
 # Member (Renewable Energy)...") and the site's own masthead link ("Uttar Pradesh
@@ -135,7 +213,8 @@ def looks_like_tender(text):
     tariff order or a net-metering circular changes what is worth bidding on
     just as much as a fresh tender does.
     """
-    if NOT_A_TENDER_RE.search(text) or ORG_NAME_RE.search(text):
+    if (NOT_A_TENDER_RE.search(text) or ORG_NAME_RE.search(text)
+            or REFERENCE_PAGE_RE.search(text) or is_stale_archive(text)):
         return False
     return (bool(TENDER_VOCAB_RE.search(text))
             or bool(NOTICE_VOCAB_RE.search(text))
@@ -282,17 +361,26 @@ def fetch_portal(portal, state, matches, timeout, session=None):
 
             on_topic = [(text, link) for text, link in harvest_links(html, url)
                         if matches(text)]
-            hits = [
-                {
+            # One tender is often linked twice on the same page - a clean
+            # heading and a row of furniture ("gavel 16 Sep 2025 Closed ...
+            # Read more arrow_forward"). The portal+title key treats those as
+            # two tenders because the anchor text differs, so collapse them
+            # here, on the URL, while we are still inside a single page and the
+            # URL is therefore meaningful. Across runs the URL is not safe to
+            # key on - GePNIC session parameters change - which is why this
+            # stays local to one fetch. First wins: the heading comes first.
+            hits, seen_here = [], set()
+            for text, link in on_topic:
+                if not looks_like_tender(text) or link in seen_here:
+                    continue
+                seen_here.add(link)
+                hits.append({
                     "title": text,
                     "url": link,
                     "state": state,
                     "portal": portal["label"],
                     "source": urlparse(url).netloc,
-                }
-                for text, link in on_topic
-                if looks_like_tender(text)
-            ]
+                })
             if hits:
                 return hits, None
 
@@ -328,7 +416,8 @@ def tender_key(item):
 
 
 def collect(sources, keywords, max_fetches, timeout=25, session=None,
-            portal_kinds=DEFAULT_PORTAL_KINDS, workers=DEFAULT_WORKERS):
+            portal_kinds=DEFAULT_PORTAL_KINDS, workers=DEFAULT_WORKERS,
+            collapse=True):
     """Walk every configured portal within the fetch budget.
 
     Returns (items, errors). Portals are fetched concurrently but chosen and
@@ -373,7 +462,7 @@ def collect(sources, keywords, max_fetches, timeout=25, session=None,
             errors.append("%s %s (%s)" % (state, portal["label"], error))
         items.extend(found)
 
-    return items, errors
+    return (collapse_near_duplicates(items) if collapse else items), errors
 
 
 def load_sources(path="sources.json"):

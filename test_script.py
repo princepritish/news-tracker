@@ -574,5 +574,30 @@ finally:
     s.requests.get = _saved_get
 check("a 200 is left alone", [c[0] for c in _calls], ["plain"])
 
+print("\n=== the author's bio is not the story's location ===")
+os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
+s = load()
+# Live: "Rooftop Solar after PM Surya Ghar" was filed under Andhra Pradesh
+# because character 6648 of 7896 read "...student at Madanapalle Institute of
+# Technology, Andhra Pradesh". A byline is not a dateline.
+_lede = "A rooftop solar scheme review. " * 8
+_bio = " The author is a student at an institute of technology in Andhra Pradesh."
+_article = _lede + ("More discussion of the scheme. " * 60) + _bio
+
+check("the whole body finds the bio's state",
+      s.find_state(_article, "Rooftop Solar after PM Surya Ghar"), "andhra pradesh")
+check("the head of the article does not",
+      s.find_state(_article[:s.BODY_HEAD_CHARS], "Rooftop Solar after PM Surya Ghar"),
+      None)
+# mirror the real call: the pipeline truncates before asking
+check("a state named up front is still read",
+      s.find_state(("A 300 MW plant was commissioned in Bihar. " + _article)[:s.BODY_HEAD_CHARS],
+                   "Plant commissioned"), "bihar")
+# and the untruncated body is genuinely ambiguous - two states, so neither wins
+check("untruncated, two states means none",
+      s.find_state("A 300 MW plant was commissioned in Bihar. " + _article,
+                   "Plant commissioned"), None)
+check("the window is configurable", s.BODY_HEAD_CHARS, 1500)
+
 print("\n" + ("ALL PASS" if ok else "FAILURES ABOVE"))
 sys.exit(0 if ok else 1)

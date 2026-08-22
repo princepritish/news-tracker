@@ -120,6 +120,20 @@ One run, in order:
   decoration: a live run turned up three unrelated 100 MW stories with the
   identical fingerprint `{p100}`, and on figures alone the second would have
   silently suppressed the first.
+- **The tender list is cleaned in four passes, each from a real complaint.**
+  Within one page, duplicate URLs collapse (a portal links each tender twice -
+  a clean heading and a row of furniture ending "Read more arrow_forward").
+  Within one state, near-identical titles collapse (Telangana's REDA and DISCOM
+  both mirror the state solar policy). Static reference material is excluded
+  (a bidding workflow chart, a commissioning certificate). And a dated
+  *procurement event* whose year is long past is dropped, while a dated
+  *policy* is kept - "Telangana Solar Bid 2015" is an archive, "MP Policy ...
+  2016" is the rule still in force.
+- **State never comes from the tail of an article.** Only the first
+  `BODY_HEAD_CHARS` (1500) of a scraped body may set it. "Rooftop Solar after
+  PM Surya Ghar" was filed under Andhra Pradesh because character 6648 of 7896
+  read "...student at Madanapalle Institute of Technology, Andhra Pradesh". A
+  byline is not a dateline.
 - **Tender identity is portal + normalised title, never the URL.** GePNIC detail
   links carry session parameters that change between visits, so URL-based dedup
   would re-report every tender daily.
