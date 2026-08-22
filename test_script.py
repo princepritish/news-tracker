@@ -86,10 +86,10 @@ def check(label, got, want):
 
 print("=== run 1: seeding ===")
 s = load(); SENT.clear(); s.main()
-body = SENT[0]["textContent"]
-check("one email sent", len(SENT), 1)
-check("no news listed", "SECI" in body, False)
-check("explains seeding", "already reviewed" in internal(), True)
+# Nothing was assessed, so there is nothing to send a client.
+check("seeding sends no email", len(SENT), 0)
+check("no news listed", "SECI" in internal(), False)
+check("explains seeding to the owner", "already reviewed" in internal(), True)
 
 def fresh_batch(tag):
     """New URLs so they are genuinely unseen after the seeding run."""
@@ -114,11 +114,12 @@ check("single source has no 'also'", "also:" in s.build_email([{ "title": "x",
     "url": "u", "state": "bihar", "sources": ["EQ Mag"], "fingerprint": set()}],
     1, False), False)
 
-print("\n=== run 3: nothing new, still sends ===")
+print("\n=== run 3: nothing new, stays quiet ===")
 feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("b"))
 s = load(); SENT.clear(); s.main()
-check("email still sent", len(SENT), 1)
-check("says no news", "No new matching news today" in SENT[0]["textContent"], True)
+check("no email on a day with nothing new", len(SENT), 0)
+check("the owner's copy still records the run",
+      "No new matching news today" in internal(), True)
 
 print("\n=== clustering failure (rate limit) fails open ===")
 FAIL_CLUSTER = True
@@ -153,19 +154,18 @@ print("\n=== empty db seeds and explains why ===")
 os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
 feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("d"))
 s = load(); SENT.clear(); s.main()
-_b = SENT[0]["textContent"]
 check("seeds on empty db", "recorded as already reviewed" in internal(), True)
 check("explains deployment cause", "deployment" in internal(), True)
-check("no news listed", "BIHAR" in _b, False)
+check("a seeding run reaches no client", len(SENT), 0)
+check("no news listed", "BIHAR" in internal(), False)
 
 print("\n=== feed failure counted ===")
 os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
 def bad_get(u, **k): raise ConnectionError("dns")
 rq.get = bad_get
 s = load(); SENT.clear(); s.main()
-body = SENT[0]["textContent"]
 check("feed error reported", "1 failed" in internal(), True)
-check("still sends", len(SENT), 1)
+check("a run with every feed down has nothing to send", len(SENT), 0)
 rq.get = get
 
 print("\n=== no usable Groq model ===")
@@ -174,18 +174,21 @@ _saved = MODELS[:]
 MODELS.clear(); MODELS.extend(["whisper-large-v3", "llama-guard-4"])  # no chat model
 os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
 feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("e"))
+s = load(); SENT.clear(); s.main()                       # seeds
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("e2"))
 s = load(); SENT.clear(); s.main()
-_b = SENT[0]["textContent"]
 check("model warning reaches the owner", "LLM UNAVAILABLE" in internal(), True)
-check("still sends", len(SENT), 1)
+check("news still sends with no usable model", len(SENT), 1)
 check("no llm calls attempted", s.budget.llm_calls, 0)
 MODELS.clear(); MODELS.extend(_saved)
 
 print("\n=== LLM budget cap ===")
 os.environ.update(DB_PATH=tempfile.mktemp(suffix=".db"), MAX_LLM_CALLS_PER_RUN="0")
-s = load(); SENT.clear(); s.main(); SENT.clear(); s2 = load(); s2.main()
+s = load(); SENT.clear(); s.main()                       # seeds
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("g"))
+SENT.clear(); s2 = load(); s2.main()
 check("llm calls stay at 0", s2.budget.llm_calls, 0)
-check("still sends", len(SENT), 1)
+check("news still sends with the budget at zero", len(SENT), 1)
 
 import requests
 print("\n=== send failure must not consume the news ===")
@@ -236,7 +239,10 @@ check("tender count in footer", "| Tenders |" in internal(), True)
 # same tenders next run -> already recorded, so not repeated
 feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("t3"))
 s_ = load(); SENT.clear(); s_.main()
-check("tender not repeated next run", "Rooftop Solar Plant" in SENT[0]["textContent"], False)
+# The report is written whether or not anything is sent, so assert on it: this
+# run has no new tenders and its figures were already sent, so nothing goes out.
+check("tender not repeated next run", "Rooftop Solar Plant" in internal(), False)
+check("and with nothing new there is no email", len(SENT), 0)
 
 # a portal blowing up must not cost us the news digest
 def _boom(url, **kw):
@@ -382,14 +388,13 @@ check("owner copy keeps the feed tally", "| Feeds |" in own, True)
 check("owner copy keeps the budget", "| LLM calls |" in own, True)
 check("owner copy keeps the storage line", "Storage" in own, True)
 
-# a seeding run must not explain databases to a client either
+# a seeding run reaches no client at all now, which also settles the question of
+# whether it might explain databases to one
 os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
 feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("z3"))
 s_ = load(); SENT.clear(); s_.main()
-seed_client = SENT[0]["textContent"]
-check("seeding run says nothing technical to the client",
-      any(w in seed_client for w in ("deployment", "database", "already reviewed")), False)
-check("and still sends something", len(SENT), 1)
+check("a seeding run reaches no client", len(SENT), 0)
+check("the owner still gets the explanation", "already reviewed" in internal(), True)
 requests.get = _orig_get
 
 print("\n=== a seeding run must not look like a filter failure ===")
@@ -467,21 +472,50 @@ check("subject is the plain client line", SENT[0]["subject"], "Today's Solar Ale
 check("no story count in the subject", "story" in SENT[0]["subject"], False)
 check("no internal product name", "BESS" in SENT[0]["subject"], False)
 
-# a quiet day must not put "0 story(ies)" in front of a client
+# a quiet day sends nothing at all, so no subject line reaches anyone
 os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
 feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("sj3"))
 s_ = load(); SENT.clear(); s_.main()                      # seeding = no news
-check("same subject on a day with nothing to report",
-      SENT[0]["subject"], "Today's Solar Alerts")
+check("a day with nothing to report sends no subject at all", len(SENT), 0)
 
 # still overridable
 os.environ["EMAIL_SUBJECT"] = "Khetan Solar Digest"
 os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
 feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("sj4"))
+s_ = load(); SENT.clear(); s_.main()                      # seeds
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("sj5"))
 s_ = load(); SENT.clear(); s_.main()
 check("EMAIL_SUBJECT overrides it", SENT[0]["subject"], "Khetan Solar Digest")
 os.environ.pop("EMAIL_SUBJECT", None)
 requests.get = _orig_get
+
+print("\n=== an empty run must not reach the client ===")
+os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
+os.environ.pop("SEND_WHEN_EMPTY", None)
+requests.get = _orig_get                      # portals unreachable -> no tenders
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("q1"))
+s_ = load(); SENT.clear(); s_.main()          # seeding: nothing was assessed
+check("a seeding run sends nothing", len(SENT), 0)
+# ...but what it reviewed is recorded, so tomorrow does not redo it
+check("seeding still recorded what it reviewed", s_.seen_count() > 0, True)
+
+# real news goes out as usual
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("q2"))
+s_ = load(); SENT.clear(); s_.main()
+check("a day with news still sends", len(SENT), 1)
+check("and it carries the news", "BIHAR" in SENT[0]["textContent"], True)
+
+# the very same feed again: every URL is already seen, so there is nothing to say
+s_ = load(); SENT.clear(); s_.main()
+check("a day with no new items sends nothing", len(SENT), 0)
+
+# the old always-send behaviour is still available
+os.environ["SEND_WHEN_EMPTY"] = "1"
+os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("q3"))
+s_ = load(); SENT.clear(); s_.main()          # seeding, which normally stays quiet
+check("SEND_WHEN_EMPTY restores the heartbeat", len(SENT), 1)
+os.environ.pop("SEND_WHEN_EMPTY", None)
 
 print("\n" + ("ALL PASS" if ok else "FAILURES ABOVE"))
 sys.exit(0 if ok else 1)
