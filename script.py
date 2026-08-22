@@ -84,6 +84,11 @@ EMAIL_TO = os.getenv("EMAIL_TO")
 EMAIL_BCC = os.getenv("EMAIL_BCC")
 SENDER_EMAIL = os.getenv("SENDER_EMAIL", "princepritish26@gmail.com")
 
+# The subject line a client sees. Deliberately fixed and plain - a story count
+# in the subject is an internal detail, and "0 story(ies)" is a bad thing to
+# land in a client inbox on a quiet day.
+EMAIL_SUBJECT = os.getenv("EMAIL_SUBJECT", "Today's Solar Alerts")
+
 # Every run writes the digest to this file as Markdown. Set REPORT_PATH= (empty)
 # to turn it off.
 REPORT_PATH = os.getenv("REPORT_PATH", "report.md")
@@ -1154,8 +1159,7 @@ def main():
                      diagnostics=True), INTERNAL_REPORT_PATH)
 
     if EMAIL_ENABLED:
-        delivered = send_email(
-            f"Solar & BESS Daily — {len(clusters)} story(ies)", body)
+        delivered = send_email(EMAIL_SUBJECT, body)
     else:
         # Report-only: the file on disk is the delivery, so it decides.
         delivered = report_written

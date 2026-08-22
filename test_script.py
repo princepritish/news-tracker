@@ -454,5 +454,34 @@ check("an explicit cap is still obeyed",
 os.environ.pop("MAX_ITEMS_PER_EMAIL", None)
 requests.get = _orig_get
 
+print("\n=== the subject line a client sees ===")
+os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
+os.environ.pop("EMAIL_SUBJECT", None)
+requests.get = _get
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("sj1"))
+s_ = load(); SENT.clear(); s_.main()                      # seeds
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("sj2"))
+s_ = load(); SENT.clear(); s_.main()
+
+check("subject is the plain client line", SENT[0]["subject"], "Today's Solar Alerts")
+check("no story count in the subject", "story" in SENT[0]["subject"], False)
+check("no internal product name", "BESS" in SENT[0]["subject"], False)
+
+# a quiet day must not put "0 story(ies)" in front of a client
+os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("sj3"))
+s_ = load(); SENT.clear(); s_.main()                      # seeding = no news
+check("same subject on a day with nothing to report",
+      SENT[0]["subject"], "Today's Solar Alerts")
+
+# still overridable
+os.environ["EMAIL_SUBJECT"] = "Khetan Solar Digest"
+os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("sj4"))
+s_ = load(); SENT.clear(); s_.main()
+check("EMAIL_SUBJECT overrides it", SENT[0]["subject"], "Khetan Solar Digest")
+os.environ.pop("EMAIL_SUBJECT", None)
+requests.get = _orig_get
+
 print("\n" + ("ALL PASS" if ok else "FAILURES ABOVE"))
 sys.exit(0 if ok else 1)

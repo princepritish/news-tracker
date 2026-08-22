@@ -48,6 +48,9 @@ after Brevo accepts it.
 - `BREVO_API_KEY`: Brevo API key. Required unless `EMAIL_ENABLED=0`
 - `EMAIL_TO`: Comma-separated recipient list. Required unless `EMAIL_ENABLED=0`
 - `EMAIL_BCC`: Optional single BCC email ID
+- `EMAIL_SUBJECT`: subject line the client sees (default `Today's Solar Alerts`).
+  Fixed on purpose - a story count in a subject is an internal detail, and
+  "0 story(ies)" is a poor thing to land in a client inbox on a quiet day.
 - `LEDE_CHARS`: how much of a summary can decide the topic (default `400`).
   A keyword past this point is treated as a passing mention, which is what
   keeps bidder lists and "related articles" tails out of the digest.
