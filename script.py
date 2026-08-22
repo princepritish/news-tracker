@@ -521,11 +521,23 @@ def find_state(text, title=None):
     return found[0] if found[0] in states_in(text, require_cue=True) else None
 
 
+# "The model said this is not one of our states" and "the call never happened"
+# are different answers, and collapsing them loses news. Groq's free tier allows
+# 8,000 tokens a minute on gpt-oss-20b - about eleven of these prompts - so a
+# run of any size WILL be rate-limited, and every 429 used to mark an article
+# seen and discard it forever.
+LLM_FAILED = object()
+
+
 def llm_extract_state(title, content):
-    """Ask which tracked state an article concerns, for articles that name a city
-    or project but never the state itself."""
+    """Which tracked state an article concerns.
+
+    Returns a state name, None when the model genuinely says none applies, or
+    LLM_FAILED when the call could not be made - a rate limit, a timeout, a dead
+    key. The caller must defer LLM_FAILED rather than treat it as a verdict.
+    """
     if not FAST_MODEL or not budget.can_call_llm():
-        return None
+        return LLM_FAILED
 
     budget.llm_calls += 1
     states = ", ".join(STATE_ALIASES.keys())
@@ -557,8 +569,9 @@ Article:
         return None
 
     except Exception as e:
+        # Not a verdict - the article has not been judged at all.
         print("[LLM ERROR]", e)
-        return None
+        return LLM_FAILED
 
 
 # ---------------- FINGERPRINT ----------------
@@ -761,6 +774,12 @@ def process_site(site, seeding):
                     budget.deferred += 1
                     continue
                 state = llm_extract_state(title, content)
+
+            if state is LLM_FAILED:
+                # Rate limited, timed out, or no model. Leave it unmarked so the
+                # next run judges it, exactly as a failed scrape is treated.
+                budget.deferred += 1
+                continue
 
             if not state:
                 mark_seen(url)

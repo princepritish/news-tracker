@@ -141,6 +141,17 @@ One run, in order:
   section only, never the news digest.
 - **The report is always written**, even with no news, so silence means the cron
   broke.
+- **A failed LLM call is not a verdict.** `llm_extract_state` returns a state,
+  `None` when the model genuinely says none applies, or `LLM_FAILED` when the
+  call never happened - a 429, a timeout, a dead key, an exhausted budget. Only
+  `None` marks the article seen. This matters on Groq's free tier: 8,000 tokens
+  a minute on `gpt-oss-20b` is about eleven of these ~700-token prompts, so a
+  run of any size *will* be rate-limited, and collapsing the two used to mark
+  each rate-limited article seen and lose it for good.
+- **Groq free tier, per model:** 30 req/min, 1,000 req/day, 8,000 tokens/min,
+  200,000 tokens/day. State extraction (`gpt-oss-20b`) costs ~700 tokens a call,
+  so the daily ceiling is ~285 articles and the per-minute one is ~11. Clustering
+  (`gpt-oss-120b`) is one call a run on a separate quota and never binds.
 - **Scrape failures and budget exhaustion are deferred, not dropped** — counted
   in `budget.deferred` and left unmarked so the next run retries them.
 

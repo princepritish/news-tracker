@@ -28,8 +28,11 @@ sys.modules["groq"] = groq
 
 np = types.ModuleType("newspaper")
 class Article:
-    def __init__(s, u): s.url, s.text = u, ""
+    def __init__(s, u): s.url, s.text, s.html = u, "", ""
     def download(s): pass
+    # the pipeline fetches the page itself now and hands the html over, so the
+    # stub has to accept it or every scrape silently "fails" and defers
+    def set_html(s, html): s.html = html
     def parse(s): s.text = "body text"
 np.Article = Article
 sys.modules["newspaper"] = np
@@ -598,6 +601,63 @@ check("untruncated, two states means none",
       s.find_state("A 300 MW plant was commissioned in Bihar. " + _article,
                    "Plant commissioned"), None)
 check("the window is configurable", s.BODY_HEAD_CHARS, 1500)
+
+print("\n=== a rate limit is not a verdict ===")
+os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
+os.environ["SKIP_SEEDING"] = "1"
+os.environ.pop("MAX_LLM_CALLS_PER_RUN", None)   # an earlier case pinned it to 0
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("rl"))
+
+# Groq free tier allows ~11 of these prompts a minute, so a real run WILL be
+# rate limited. Every 429 used to mark the article seen and lose it for good.
+STATE_ANS = "NONE"
+s = load()
+check("a genuine NONE is a verdict", s.llm_extract_state("t", "body"), None)
+# an exhausted budget means the article was never judged either
+s.budget.llm_calls = s.MAX_LLM_CALLS_PER_RUN
+check("an exhausted budget is not a verdict",
+      s.llm_extract_state("t", "body") is s.LLM_FAILED, True)
+s.budget.llm_calls = 0
+
+_saved_create = groq.Groq.create
+def _rate_limited(self, model, messages, **kw):
+    raise RuntimeError("Error code: 429 - rate_limit_exceeded")
+groq.Groq.create = _rate_limited
+s = load()
+check("a 429 is not a verdict", s.llm_extract_state("t", "body") is s.LLM_FAILED, True)
+
+# and the article survives it. These headlines name no tracked state, so they
+# are exactly the ones that reach the LLM.
+NO_STATE = [
+    {"title": "NTPC commissions 300 MW solar at Rihand", "link": "http://n/1",
+     "summary": "solar project commissioned"},
+    {"title": "SECI floats 500 MW solar tender at Kurnool", "link": "http://n/2",
+     "summary": "solar tender floated"},
+]
+os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=NO_STATE)
+s = load(); SENT.clear(); s.main()
+check("these headlines really do reach the LLM", s.budget.scrapes > 0, True)
+check("rate-limited articles are deferred, not dropped", s.budget.deferred, 2)
+check("and none of them was marked seen", s.seen_count(), 0)
+
+groq.Groq.create = _saved_create
+
+# next run, with the LLM answering again, the same articles are still judged
+STATE_ANS = "bihar"
+s2 = load(); SENT.clear(); s2.main()
+check("the next run judges them instead of losing them", s2.budget.deferred, 0)
+check("and they are recorded once judged", s2.seen_count() > 0, True)
+STATE_ANS = "NONE"
+
+# no model at all is also not a verdict
+_saved = MODELS[:]
+MODELS.clear(); MODELS.extend(["whisper-large-v3"])
+s3 = load()
+check("no usable model is not a verdict either",
+      s3.llm_extract_state("t", "body") is s3.LLM_FAILED, True)
+MODELS.clear(); MODELS.extend(_saved)
+os.environ.pop("SKIP_SEEDING", None)
 
 print("\n" + ("ALL PASS" if ok else "FAILURES ABOVE"))
 sys.exit(0 if ok else 1)
