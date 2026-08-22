@@ -95,10 +95,12 @@ One run, in order:
    already sent this week.
 3. **Clustering** — one LLM call groups the whole run by underlying event, so the
    same tender from ten outlets becomes one line.
-4. **Tenders** — always run; harvest links from each portal in parallel and
-   keep those whose anchor text matches a tender keyword. There is no on/off
-   flag: collection is wrapped whole, so a portal failing costs the tender
-   section only and never the news.
+4. **Tenders and government notices** — always run; harvest links from each
+   portal in parallel and keep those that read as procurement *or* as a notice
+   (a tariff order, a net-metering circular, a policy amendment). The notices
+   matter as much as the tenders: they change what is worth bidding on.
+   There is no on/off flag: collection is wrapped whole, so a portal failing
+   costs the tender section only and never the news.
 5. **One report** (`report.md`), always written, grouped by state, with a health
    section. Optionally also one email.
 

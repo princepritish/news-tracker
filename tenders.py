@@ -45,6 +45,15 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 
+# The verify=False fallback below is deliberate, so urllib3 warning about it
+# once per portal per run is pure noise in the log - and the log is where the
+# only remaining health signal lives.
+try:
+    from urllib3.exceptions import InsecureRequestWarning
+    requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+except Exception:
+    pass
+
 UA = {"User-Agent": "Mozilla/5.0 (compatible; SolarTenderWatch/1.0)"}
 
 # Tender listings are link text, which is short - so an anchor-text match is a
@@ -84,10 +93,21 @@ DEFAULT_WORKERS = 8
 # procuring, and their titles are long (median 250 characters against 27 for the
 # scheme links). Either signal is enough, so a terse "PPA for 10MW solar" is kept
 # while "Solar Related" is not.
+# Procurement wording.
 TENDER_VOCAB_RE = re.compile(
     r"\b(tenders?|bids?|bidding|rfq|rfp|eoi|nit|quotations?|empanel\w*|supply|"
     r"installation|erection|commissioning|construction|procurement|contract|"
     r"auction|corrigend\w*|ppa|invit\w+|expression of interest)\b", re.I)
+
+# The section is "Tenders & govt notices", and the notices matter as much as the
+# tenders: a tariff order, a net-metering circular or a policy amendment changes
+# what is worth bidding on. These sit alongside the procurement words rather
+# than replacing them, and the exclusions below still strip menu items, job ads
+# and mastheads - "Net Metering (Solar)" carries none of these words.
+NOTICE_VOCAB_RE = re.compile(
+    r"\b(notice|notification|circular|office memorandum|"
+    r"tariff order|order no|policy|guidelines?|regulations?|amendment|"
+    r"addendum|advisory|public consultation|discussion paper)\b", re.I)
 
 MIN_TENDER_TITLE = 60
 
@@ -109,10 +129,17 @@ ORG_NAME_RE = re.compile(
 
 
 def looks_like_tender(text):
-    """True if the anchor text reads like a procurement notice, not a menu item."""
+    """True if the anchor text reads like a tender or a government notice.
+
+    Both belong in the digest: the section is "Tenders & govt notices", and a
+    tariff order or a net-metering circular changes what is worth bidding on
+    just as much as a fresh tender does.
+    """
     if NOT_A_TENDER_RE.search(text) or ORG_NAME_RE.search(text):
         return False
-    return bool(TENDER_VOCAB_RE.search(text)) or len(text) >= MIN_TENDER_TITLE
+    return (bool(TENDER_VOCAB_RE.search(text))
+            or bool(NOTICE_VOCAB_RE.search(text))
+            or len(text) >= MIN_TENDER_TITLE)
 
 
 # Junk that appears as links on every government portal.

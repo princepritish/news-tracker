@@ -436,5 +436,30 @@ check("a real empanelment is still kept",
           "Provisional Empanelment of OEMs (Solar Module, Inverter, Battery, "
           "MMS, SLS) under OREDA Ltd."), True)
 
+print("\n=== government notices belong here too ===")
+# The section is "Tenders & govt notices". A tariff order or a net-metering
+# circular changes what is worth bidding on as much as a fresh tender does, so
+# procurement wording is not the only way in.
+for _t in ("Public Notice regarding rooftop solar subsidy",
+           "Circular on net metering for solar consumers",
+           "Tariff Order for Solar Projects FY27",
+           "MP Policy for Decentralised Renewable Energy System 2016",
+           "Guidelines for implementation of rooftop solar",
+           "Regulation for timeline and TFR waiver of Rooftop Solar connection",
+           "Amendment to the solar banking notification"):
+    check("notice kept: %s" % _t[:38], tenders.looks_like_tender(_t), True)
+
+# ...and the menu items still stay out, because none of them carry those words
+for _t in ("Net Metering (Solar)", "PM Suryaghar Solar Registration",
+           "Solar Related", "Solar Roof Top Registration",
+           "Apply for Rooftop Solar"):
+    check("menu item still dropped: %s" % _t[:30], tenders.looks_like_tender(_t), False)
+
+# exclusions still beat the new vocabulary
+check("a job advert is still not a notice",
+      tenders.looks_like_tender(
+          "Appointment to the post of Member (Renewable Energy) - "
+          "applications are invited for the post, as per policy"), False)
+
 print("\n" + ("ALL PASS" if OK else "FAILURES ABOVE"))
 sys.exit(0 if OK else 1)

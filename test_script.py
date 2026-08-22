@@ -517,5 +517,62 @@ s_ = load(); SENT.clear(); s_.main()          # seeding, which normally stays qu
 check("SEND_WHEN_EMPTY restores the heartbeat", len(SENT), 1)
 os.environ.pop("SEND_WHEN_EMPTY", None)
 
+print("\n=== article pages are fetched the way feeds are ===")
+# 28 of 29 scrape failures were HTTP 403 from four Cloudflare publishers whose
+# feeds we had already recovered - newspaper3k was fetching the article page
+# with its own plain client and hitting the same wall one layer down.
+os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
+s = load()
+
+_calls = []
+class _Resp:
+    def __init__(self, code, text): self.status_code, self.text = code, text
+
+def _walled(url, **kw):
+    _calls.append(("plain", url))
+    return _Resp(403, "cloudflare challenge")
+
+class _Imp:
+    @staticmethod
+    def get(url, **kw):
+        _calls.append(("impersonated", url, kw.get("impersonate")))
+        return _Resp(200, "<html><body><p>the article body</p></body></html>")
+
+_saved_get, _saved_imp = s.requests.get, s.impersonator
+s.requests.get, s.impersonator = _walled, _Imp
+try:
+    html = s.fetch_article_html("https://www.pv-tech.org/story/")
+finally:
+    s.requests.get, s.impersonator = _saved_get, _saved_imp
+
+check("a 403 is retried as a browser", [c[0] for c in _calls],
+      ["plain", "impersonated"])
+check("and it impersonates chrome", _calls[1][2], "chrome")
+check("the article html comes back", "the article body" in html, True)
+
+# with no impersonator available it must fail cleanly, not hang or lie
+s.requests.get, s.impersonator = _walled, None
+try:
+    _err = None
+    try:
+        s.fetch_article_html("https://www.pv-tech.org/story/")
+    except Exception as e:
+        _err = str(e)
+finally:
+    s.requests.get, s.impersonator = _saved_get, _saved_imp
+check("without impersonation it raises the status", _err, "HTTP 403")
+
+# a normal 200 must not spend an impersonation request
+_calls.clear()
+def _fine(url, **kw):
+    _calls.append(("plain", url))
+    return _Resp(200, "<html><body><p>ordinary page</p></body></html>")
+s.requests.get = _fine
+try:
+    html = s.fetch_article_html("https://example.com/a")
+finally:
+    s.requests.get = _saved_get
+check("a 200 is left alone", [c[0] for c in _calls], ["plain"])
+
 print("\n" + ("ALL PASS" if ok else "FAILURES ABOVE"))
 sys.exit(0 if ok else 1)

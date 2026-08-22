@@ -303,6 +303,29 @@ BROWSER_UA = {
 }
 
 
+def fetch_article_html(url):
+    """The article page, fetched the same way the feeds are.
+
+    newspaper3k downloads with its own plain client, which is why the four
+    Cloudflare publishers whose *feeds* we recovered still 403 on their
+    *article* pages. Measured: 28 of 29 scrape failures were HTTP 403, all from
+    solarenergy.org, solarbuildermag.com, pv-tech.org and energy-storage.news -
+    the same wall, hit one layer down. Reusing the browser headers, and the TLS
+    impersonation on a 403, gets past it.
+    """
+    r = requests.get(url, headers=BROWSER_UA, timeout=FEED_TIMEOUT)
+    if r.status_code == 403 and impersonator is not None:
+        try:
+            r2 = impersonator.get(url, impersonate="chrome", timeout=FEED_TIMEOUT)
+            if r2.status_code < 400:
+                r = r2
+        except Exception:
+            pass
+    if r.status_code >= 400:
+        raise RuntimeError("HTTP %s" % r.status_code)
+    return r.text
+
+
 # ---------------- DATABASE ----------------
 def open_db():
     """Return (connection, health_note). Never raises - a storage problem must
@@ -717,7 +740,7 @@ def process_site(site, seeding):
             budget.scrapes += 1
             try:
                 article = Article(url)
-                article.download()
+                article.set_html(fetch_article_html(url))
                 article.parse()
                 content = article.text or desc
             except Exception:
