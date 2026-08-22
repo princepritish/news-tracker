@@ -55,7 +55,7 @@ after Brevo accepts it.
 ## Phase 2 — government tenders
 
 `sources.json` holds 18 regions from the tender database: e-tender portal, REDA
-agency and DISCOM for each. Off by default; enable with `TENDERS_ENABLED=1`.
+agency and DISCOM for each. Always on - tenders are half of what the digest is for.
 
 ```bash
 python probe_tenders.py        # which portals respond, and what they return
@@ -86,10 +86,9 @@ section only, never the news digest.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `TENDERS_ENABLED` | `0` | `1` switches Phase 2 on |
 | `MAX_PORTAL_FETCHES` | `60` | Portal requests per run (sources.json holds 56) |
 | `PORTAL_TIMEOUT` | `25` | Seconds per portal |
-| `MAX_TENDERS_PER_EMAIL` | `40` | Cap on listed tenders |
+| `MAX_TENDERS_PER_EMAIL` | `0` | Cap on listed tenders; `0` means no cap |
 | `PORTAL_WORKERS` | `8` | Portals fetched at once |
 | `PORTAL_KINDS` | `etender,tender_page,agency,discom` | Which portals to read |
 

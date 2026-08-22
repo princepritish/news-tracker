@@ -115,7 +115,9 @@ CLUSTER_MODEL = os.getenv("CLUSTER_MODEL", "llama-3.3-70b-versatile")
 MAX_ENTRIES_PER_SITE = int(os.getenv("MAX_ENTRIES_PER_SITE", "40"))
 MAX_SCRAPES_PER_RUN = int(os.getenv("MAX_SCRAPES_PER_RUN", "60"))
 MAX_LLM_CALLS_PER_RUN = int(os.getenv("MAX_LLM_CALLS_PER_RUN", "60"))
-MAX_ITEMS_PER_EMAIL = int(os.getenv("MAX_ITEMS_PER_EMAIL", "60"))
+# Caps on what a single digest lists. 0 means no cap - send everything the run
+# captured, which is the current intent while the output is being judged.
+MAX_ITEMS_PER_EMAIL = int(os.getenv("MAX_ITEMS_PER_EMAIL", "0"))
 DEDUP_WINDOW_DAYS = int(os.getenv("DEDUP_WINDOW_DAYS", "7"))
 FEED_TIMEOUT = int(os.getenv("FEED_TIMEOUT", "20"))
 
@@ -123,12 +125,12 @@ FEED_TIMEOUT = int(os.getenv("FEED_TIMEOUT", "20"))
 # past this point is a passing mention, not what the piece is about.
 LEDE_CHARS = int(os.getenv("LEDE_CHARS", "400"))
 
-# Phase 2 - government tender portals. Off by default so enabling it is a
-# deliberate act; the news digest is unaffected either way.
-TENDERS_ENABLED = os.getenv("TENDERS_ENABLED", "0") == "1"
+# Phase 2 - government tender portals. Always on: tenders are half of what this
+# digest is for. Collection stays wrapped whole, so a portal failing still costs
+# the tender section only and never the news.
 MAX_PORTAL_FETCHES = int(os.getenv("MAX_PORTAL_FETCHES", "60"))
 PORTAL_TIMEOUT = int(os.getenv("PORTAL_TIMEOUT", "25"))
-MAX_TENDERS_PER_EMAIL = int(os.getenv("MAX_TENDERS_PER_EMAIL", "40"))
+MAX_TENDERS_PER_EMAIL = int(os.getenv("MAX_TENDERS_PER_EMAIL", "0"))
 PORTAL_WORKERS = int(os.getenv("PORTAL_WORKERS", str(tenders.DEFAULT_WORKERS)))
 # Which portal kinds to read. The GePNIC e-tender portals are captcha-gated, so
 # the readable tenders come from the agency and DISCOM sites; set this to
@@ -269,6 +271,11 @@ class Budget:
 
 
 budget = Budget()
+
+
+def capped(items, limit):
+    """items trimmed to `limit`, where 0 (or less) means no trimming at all."""
+    return items if not limit or limit <= 0 else items[:limit]
 feed_errors = []
 
 # A bare "Mozilla/5.0" is 403'd by Cloudflare and similar front ends, which is
@@ -726,7 +733,13 @@ def process_site(site, seeding):
             "fingerprint": numeric_fingerprint(f"{title} {content[:1500]}"),
         })
 
-    print(f"[FEED] {name}: {fresh} new, {len(matches)} matched")
+    # On a seeding run nothing is assessed - every entry is marked seen before
+    # the keyword gate - so reporting "0 matched" reads as though the filter
+    # rejected 475 articles when it never looked at one.
+    if seeding:
+        print(f"[FEED] {name}: {fresh} seeded (not assessed)")
+    else:
+        print(f"[FEED] {name}: {fresh} new, {len(matches)} matched")
     return matches
 
 
@@ -756,9 +769,6 @@ def gather_tenders():
     Wrapped whole: a failure anywhere in tender collection must not cost you the
     news digest, which is the part that already works.
     """
-    if not TENDERS_ENABLED:
-        return [], []
-
     try:
         ensure_tender_table()
         sources = tenders.load_sources()
@@ -899,13 +909,13 @@ def build_report(clusters, reviewed, seeding, tender_items=None,
                     out.append("   %s" % sources[0])
                 out.append("")
 
-    if TENDERS_ENABLED and not seeding:
+    if not seeding:
         out += ["## Tenders & government notices", ""]
         if not tender_items:
             out += ["No new tenders matched today.", ""]
         else:
             by_state = {}
-            for item in tender_items[:MAX_TENDERS_PER_EMAIL]:
+            for item in capped(tender_items, MAX_TENDERS_PER_EMAIL):
                 by_state.setdefault(item["state"], []).append(item)
             t = 0
             for state, entries in sorted(by_state.items()):
@@ -915,7 +925,7 @@ def build_report(clusters, reviewed, seeding, tender_items=None,
                     out.append("%d. **[%s](%s)**" % (t, item["title"], item["url"]))
                     out.append("   %s — %s" % (item["portal"], item["source"]))
                     out.append("")
-            if len(tender_items) > MAX_TENDERS_PER_EMAIL:
+            if MAX_TENDERS_PER_EMAIL and len(tender_items) > MAX_TENDERS_PER_EMAIL:
                 out += ["*...and %d more not shown.*"
                         % (len(tender_items) - MAX_TENDERS_PER_EMAIL), ""]
 
@@ -935,9 +945,8 @@ def build_report(clusters, reviewed, seeding, tender_items=None,
     out.append("| Scrapes | %d / %d |" % (budget.scrapes, MAX_SCRAPES_PER_RUN))
     if budget.deferred:
         out.append("| Deferred to next run | %d |" % budget.deferred)
-    if TENDERS_ENABLED:
-        out.append("| Tenders | %d new, %d portal error(s) |"
-                   % (len(tender_items), len(tender_errors)))
+    out.append("| Tenders | %d new, %d portal error(s) |"
+               % (len(tender_items), len(tender_errors)))
     out.append("| Storage | `%s`, %d article(s) on record |" % (DB_PATH, seen_count()))
     out.append("")
 
@@ -1026,14 +1035,14 @@ def build_email(clusters, reviewed, seeding, tender_items=None,
     tender_items = tender_items or []
     tender_errors = tender_errors or []
 
-    if TENDERS_ENABLED and not seeding:
+    if not seeding:
         lines += ["=" * 60, "TENDERS & GOVT NOTICES", "=" * 60, ""]
 
         if not tender_items:
             lines += ["No new tenders matched today.", ""]
         else:
             by_state = {}
-            for item in tender_items[:MAX_TENDERS_PER_EMAIL]:
+            for item in capped(tender_items, MAX_TENDERS_PER_EMAIL):
                 by_state.setdefault(item["state"], []).append(item)
 
             t = 0
@@ -1046,7 +1055,7 @@ def build_email(clusters, reviewed, seeding, tender_items=None,
                     lines.append(f"     {item['portal']} · {item['source']}")
                 lines.append("")
 
-            if len(tender_items) > MAX_TENDERS_PER_EMAIL:
+            if MAX_TENDERS_PER_EMAIL and len(tender_items) > MAX_TENDERS_PER_EMAIL:
                 lines += [f"...and {len(tender_items) - MAX_TENDERS_PER_EMAIL} "
                           f"more not shown", ""]
 
@@ -1070,12 +1079,11 @@ def build_email(clusters, reviewed, seeding, tender_items=None,
 
     lines.append(f"LLM calls: {budget.llm_calls}/{MAX_LLM_CALLS_PER_RUN} · "
                  f"scrapes: {budget.scrapes}/{MAX_SCRAPES_PER_RUN}")
-    if TENDERS_ENABLED:
-        lines.append(f"Tenders: {len(tender_items)} new, {len(tender_errors)} portal error(s)")
-        for err in tender_errors[:10]:
-            lines.append(f"  ! {err}")
-        if len(tender_errors) > 10:
-            lines.append(f"  ! ...and {len(tender_errors) - 10} more")
+    lines.append(f"Tenders: {len(tender_items)} new, {len(tender_errors)} portal error(s)")
+    for err in tender_errors[:10]:
+        lines.append(f"  ! {err}")
+    if len(tender_errors) > 10:
+        lines.append(f"  ! ...and {len(tender_errors) - 10} more")
 
     lines.append(f"Storage: {DB_PATH} · {seen_count()} article(s) on record")
 
@@ -1121,7 +1129,7 @@ def main():
             "fingerprint": primary["fingerprint"],
         })
 
-    if len(clusters) > MAX_ITEMS_PER_EMAIL:
+    if MAX_ITEMS_PER_EMAIL and len(clusters) > MAX_ITEMS_PER_EMAIL:
         print(f"[LIMIT] {len(clusters)} stories, capping at {MAX_ITEMS_PER_EMAIL}")
         clusters = clusters[:MAX_ITEMS_PER_EMAIL]
 
@@ -1161,7 +1169,7 @@ def main():
             mark_seen(item["url"])
         for cluster in clusters:
             record_story(cluster)
-        for item in tender_items[:MAX_TENDERS_PER_EMAIL]:
+        for item in capped(tender_items, MAX_TENDERS_PER_EMAIL):
             record_tender(item)
     elif DRY_RUN:
         # A rehearsal deliberately consumes nothing, so the same articles are

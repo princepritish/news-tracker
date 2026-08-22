@@ -19,7 +19,7 @@ no cost. **Run both before and after any change; they must stay green.**
 Rehearse against live feeds without sending anything:
 
 ```bash
-GROQ_API_KEY=... EMAIL_ENABLED=0 SKIP_SEEDING=1 TENDERS_ENABLED=1 python script.py
+GROQ_API_KEY=... EMAIL_ENABLED=0 SKIP_SEEDING=1 python script.py
 ```
 
 `SKIP_SEEDING=1` matters — without it an empty database just seeds and you see no
@@ -95,8 +95,10 @@ One run, in order:
    already sent this week.
 3. **Clustering** — one LLM call groups the whole run by underlying event, so the
    same tender from ten outlets becomes one line.
-4. **Tenders** (`TENDERS_ENABLED=1`) — harvest links from each portal in
-   parallel, keep those whose anchor text matches a tender keyword.
+4. **Tenders** — always run; harvest links from each portal in parallel and
+   keep those whose anchor text matches a tender keyword. There is no on/off
+   flag: collection is wrapped whole, so a portal failing costs the tender
+   section only and never the news.
 5. **One report** (`report.md`), always written, grouped by state, with a health
    section. Optionally also one email.
 

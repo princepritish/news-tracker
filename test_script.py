@@ -209,7 +209,6 @@ check("marked seen after successful send", s_.seen_count() > 0, True)
 os.environ.pop("SKIP_SEEDING", None)
 
 print("\n=== tenders section (Phase 2) ===")
-os.environ["TENDERS_ENABLED"] = "1"
 os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
 
 TENDER_HTML = ('<html><body>'
@@ -256,7 +255,6 @@ check("news survives total tender failure", "BIHAR" in _b, True)
 check("portal errors reported", "portal error" in internal(), True)
 
 requests.get = _orig_get
-os.environ["TENDERS_ENABLED"] = "0"
 os.environ.pop("SKIP_SEEDING", None)
 
 print("\n=== suppression key ===")
@@ -363,7 +361,6 @@ print("\n=== the client copy carries no diagnostics ===")
 # The digest is forwarded to a client, so it must never expose infrastructure,
 # costs, file paths, or the fact that a third of the sources are broken.
 os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
-os.environ["TENDERS_ENABLED"] = "1"
 requests.get = _get
 feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("z1"))
 s_ = load(); SENT.clear(); s_.main()                      # seeds
@@ -394,7 +391,68 @@ check("seeding run says nothing technical to the client",
       any(w in seed_client for w in ("deployment", "database", "already reviewed")), False)
 check("and still sends something", len(SENT), 1)
 requests.get = _orig_get
-os.environ["TENDERS_ENABLED"] = "0"
+
+print("\n=== a seeding run must not look like a filter failure ===")
+# A first deploy logged "475 new, 0 matched" across every feed, which reads as
+# the keyword gate having rejected everything. It had assessed nothing: seeding
+# marks each entry seen before the gate ever runs.
+import io as _io
+os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("sd"))
+_buf, _real = _io.StringIO(), sys.stdout
+sys.stdout = _buf
+try:
+    s_ = load(); SENT.clear(); s_.main()
+finally:
+    sys.stdout = _real
+_log = _buf.getvalue()
+check("seeding says seeded, not matched", "seeded (not assessed)" in _log, True)
+check("seeding never claims 0 matched", "0 matched" in _log, False)
+
+# a real run still reports matches the usual way
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("sd2"))
+_buf, _real = _io.StringIO(), sys.stdout
+sys.stdout = _buf
+try:
+    s_ = load(); SENT.clear(); s_.main()
+finally:
+    sys.stdout = _real
+check("a real run still reports matched", "matched" in _buf.getvalue(), True)
+
+print("\n=== tenders always run, and nothing captured is trimmed ===")
+os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
+os.environ.pop("MAX_ITEMS_PER_EMAIL", None)
+os.environ.pop("MAX_TENDERS_PER_EMAIL", None)
+requests.get = _get
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("nc1"))
+s_ = load(); SENT.clear(); s_.main()                      # seeds
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("nc2"))
+s_ = load(); SENT.clear(); s_.main()
+_b = SENT[0]["textContent"]
+
+check("tenders run with no flag set", "TENDERS & GOVT NOTICES" in _b, True)
+check("and the tender is listed", "Rooftop Solar Plant" in _b, True)
+check("no flag is consulted any more", hasattr(s_, "TENDERS_ENABLED"), False)
+
+# 0 means "send everything", which is what the caps now default to
+check("cap of 0 keeps every item", s_.capped(list(range(9)), 0), list(range(9)))
+check("negative cap also keeps everything", s_.capped(list(range(9)), -1), list(range(9)))
+check("a real cap still trims", s_.capped(list(range(9)), 4), [0, 1, 2, 3])
+check("news cap defaults to unlimited", s_.MAX_ITEMS_PER_EMAIL, 0)
+check("tender cap defaults to unlimited", s_.MAX_TENDERS_PER_EMAIL, 0)
+check("nothing was truncated", "not shown" in _b, False)
+
+# an explicit cap must still be honoured
+os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
+os.environ["MAX_ITEMS_PER_EMAIL"] = "1"
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("nc3"))
+s_ = load(); SENT.clear(); s_.main()
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("nc4"))
+s_ = load(); SENT.clear(); s_.main()
+check("an explicit cap is still obeyed",
+      "| Stories after dedup | 1 |" in internal(), True)
+os.environ.pop("MAX_ITEMS_PER_EMAIL", None)
+requests.get = _orig_get
 
 print("\n" + ("ALL PASS" if ok else "FAILURES ABOVE"))
 sys.exit(0 if ok else 1)
