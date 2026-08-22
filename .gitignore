@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+seen.db
+portal_html/
+portal_report.md
+feed_report.md
+feeds.json
