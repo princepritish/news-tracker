@@ -53,6 +53,11 @@ CANDIDATE_PATHS = [
     "blog/feed/",
     "rss/all.xml",
     "feeds/posts/default?alt=rss",
+    "news/rss",
+    "rss/news",
+    "en/rss",
+    "feed/rss",
+    "rss/feed",
 ]
 
 TIMEOUT = 25
@@ -254,16 +259,30 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--publications", default="publications.json")
     ap.add_argument("--only", help="comma-separated publication ids to probe")
+    ap.add_argument("--url", help="probe a single site URL not in publications.json")
+    ap.add_argument("--name", help="name to use with --url (defaults to the domain)")
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--report", default="feed_report.md")
     ap.add_argument("--json-out", default="feeds.json")
     ap.add_argument("--merge-config", action="store_true", help="append verified feeds to config.json")
     args = ap.parse_args()
 
-    with open(args.publications, encoding="utf-8") as fh:
-        pubs = json.load(fh)["publications"]
+    if args.url:
+        # Ad-hoc check for a site someone wants to add, without editing
+        # publications.json first.
+        from urllib.parse import urlparse as _up
+        site = args.url if args.url.startswith("http") else "https://" + args.url
+        pubs = [{
+            "id": 0,
+            "name": args.name or _up(site).netloc.replace("www.", ""),
+            "focus": "ad-hoc",
+            "site": site if site.endswith("/") else site + "/",
+        }]
+    else:
+        with open(args.publications, encoding="utf-8") as fh:
+            pubs = json.load(fh)["publications"]
 
-    if args.only:
+    if args.only and not args.url:
         wanted = {int(x) for x in args.only.split(",")}
         pubs = [p for p in pubs if p["id"] in wanted]
 
