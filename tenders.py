@@ -259,6 +259,31 @@ def meta_refresh_target(html, base_url):
     return None
 
 
+# Work that mentions a tender keyword but is not solar work. A boundary wall
+# around a solar plant is civil work, hiring vehicles for the renewable energy
+# department is transport, and a UPS battery is not storage. Each of these was
+# passing the keyword filter and reaching the report.
+EXCLUDE_PATTERNS = [re.compile(p) for p in (
+    r"\bboundary wall\b",
+    r"\bcompound wall\b",
+    r"\bfencing\b",
+    r"\bhiring of vehicle",
+    r"\bhire of vehicle",
+    r"\bstationery\b",
+    r"\bfurniture\b",
+    r"\bups\b",
+    r"\bair condition",
+    r"\bhousekeeping\b",
+    r"\bcanteen\b",
+    r"\bcatering\b",
+    r"\bhorticulture\b",
+    r"\bplantation\b",
+    r"\btoilet\b",
+)]
+# Deliberately NOT excluded: street lighting. "Solar street light" is a real
+# procurement category across these states, not municipal noise.
+
+
 def build_matcher(keywords):
     """Return a predicate matching any keyword in text.
 
@@ -278,6 +303,8 @@ def build_matcher(keywords):
 
     def matches(text):
         low = text.lower()
+        if any(p.search(low) for p in EXCLUDE_PATTERNS):
+            return False
         return any(p.search(low) for p in patterns)
 
     return matches

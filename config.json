@@ -116,12 +116,6 @@
       "verified": true
     },
     {
-      "name": "Power Review",
-      "rss": "https://www.powerreviews.com/feed/",
-      "verified": true,
-      "note": "powerreviews.com is PowerReviews, a US product-ratings SaaS vendor - not a power-sector trade magazine. Likely a wrong URL for the intended publication."
-    },
-    {
       "name": "India Power Monitor",
       "rss": "https://indiapowermonitor.com/feed/",
       "verified": true
@@ -227,11 +221,13 @@
       "solar mounting structure",
       "hybrid inverter",
       "solar battery",
-      "lithium battery",
-      "hot dip structure",
+      "lithium",
+      "hot dip",
       "pre gi structure",
       "zem structure",
-      "galvalume structure"
+      "galvalume structure",
+      "battery storage",
+      "energy storage"
     ],
     "allowed_states": [
       "Bihar",

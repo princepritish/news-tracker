@@ -40,6 +40,24 @@ check("off topic", match("Construction of boundary wall at school"), False)
 
 
 # ---------------- link harvesting ----------------
+print("\n=== noise exclusions ===")
+# Each of these matched a tender keyword and reached the report before the
+# exclusion list existed.
+for text in ("Construction of solar plant boundary wall",
+             "Hiring of vehicles for renewable energy department",
+             "Supply of battery for UPS backup",
+             "Housekeeping services at solar park",
+             "Supply of furniture for renewable energy office"):
+    check(f"excluded: {text[:44]}", match(text), False)
+
+# Real procurement must survive the exclusions - especially solar street
+# lighting, which is a genuine category here rather than municipal noise.
+for text in ("Supply and installation of 500 kWp rooftop solar plant",
+             "Supply of solar street lights in Bihar",
+             "EPC tender for 100 MW solar park",
+             "Annual maintenance of rooftop solar plant"):
+    check(f"kept: {text[:48]}", match(text), True)
+
 print("\n=== link harvesting ===")
 HTML = """
 <html><body>
