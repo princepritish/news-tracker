@@ -1,12 +1,14 @@
+# config_feed_report.md and portal_report.md are deliberately tracked:
+# they record which feeds and portals actually work, which is shared
+# knowledge, not local scratch output. Re-commit them after a live run.
+
 __pycache__/
 *.pyc
 seen.db
 portal_html/
-portal_report.md
 feed_report.md
 feeds.json
 report.md
-config_feed_report.md
 sample_report.md
 report.internal.md
 client_report.md
