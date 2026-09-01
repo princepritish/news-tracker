@@ -4,6 +4,10 @@ import json, os, sys, types, tempfile, importlib.util
 CLUSTERS = {"groups": [[0, 1], [2]]}
 STATE_ANS = "NONE"
 FAIL_CLUSTER = False
+FAIL_SUMMARY = False
+# What the stubbed model returns for a summarising call. A dict keyed by the
+# index within the batch, exactly as the real prompt asks for.
+SUMMARIES = {str(i): "Model sentence %d." % i for i in range(12)}
 
 groq = types.ModuleType("groq")
 MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
@@ -19,6 +23,9 @@ class _G:
         if "Group these energy-news headlines" in t:
             if FAIL_CLUSTER: raise RuntimeError("groq 429 rate limit")
             out = json.dumps(CLUSTERS)
+        elif "Summarise each news item" in t:
+            if FAIL_SUMMARY: raise RuntimeError("groq 429 rate limit")
+            out = json.dumps({"summaries": SUMMARIES})
         else:
             out = STATE_ANS
         return types.SimpleNamespace(choices=[types.SimpleNamespace(
@@ -658,6 +665,161 @@ check("no usable model is not a verdict either",
       s3.llm_extract_state("t", "body") is s3.LLM_FAILED, True)
 MODELS.clear(); MODELS.extend(_saved)
 os.environ.pop("SKIP_SEEDING", None)
+
+print("\n=== every story carries a summary ===")
+# The digest lists a headline and a link. Without a sentence saying what
+# happened, a reader has to open every link to find the one that matters.
+os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
+os.environ.pop("SKIP_SEEDING", None)
+s = load()
+
+_long = ("The state utility signed a power purchase agreement for a 250 MW solar "
+         "project in Bihar at a tariff of Rs 2.48 per unit. Construction starts "
+         "in November and the plant is due to commission by March 2028. The "
+         "developer will also build a 50 MWh battery.")
+check("a short lede is kept whole",
+      s.lede_summary("A 250 MW plant was commissioned."),
+      "A 250 MW plant was commissioned.")
+check("a long lede is cut at a sentence, not mid-word",
+      s.lede_summary(_long, 120).endswith("."), True)
+check("and stays within the limit", len(s.lede_summary(_long, 120)) <= 121, True)
+check("markup never reaches the summary",
+      s.lede_summary("<p>A <b>250 MW</b> plant.</p>"), "A 250 MW plant.")
+check("a byline is not a summary",
+      s.lede_summary("By Our Correspondent | A 250 MW plant opened."),
+      "A 250 MW plant opened.")
+check("a share prompt is not a summary",
+      s.lede_summary("Share this Advertisement A 250 MW plant opened."),
+      "A 250 MW plant opened.")
+# no sentence break inside the window: cut on a word and mark it
+_nostop = "Bihar signs a power purchase agreement for a very large solar project"
+check("a wordy lede with no full stop is truncated visibly",
+      s.lede_summary(_nostop, 40).endswith("…"), True)
+check("truncation never splits a word",
+      " " not in s.lede_summary(_nostop, 40)[-2:], True)
+check("empty text yields an empty summary", s.lede_summary(""), "")
+check("None is survivable", s.lede_summary(None), "")
+
+# Publishers mark their own truncation four different ways; the client sees one.
+check("a feed's [...] becomes one ellipsis",
+      s.lede_summary("Solaryaan launched a 10.24 kWh battery [...]"),
+      "Solaryaan launched a 10.24 kWh battery…")
+check("so does a trailing ...",
+      s.lede_summary("Tata Power commissioned 100 MW ..."),
+      "Tata Power commissioned 100 MW…")
+check("so does 'Read more'",
+      s.lede_summary("CIP acquired the project […] Read more"),
+      "CIP acquired the project…")
+check("a complete sentence is not given one",
+      s.lede_summary("A 250 MW plant was commissioned."),
+      "A 250 MW plant was commissioned.")
+check("a description that is only a marker is not blanked",
+      s.lede_summary("[...]") != "", True)
+
+# EQ Mag opens every description with this, so it led half a live report.
+check("'In Short :' is a label, not a summary",
+      s.lede_summary("In Short : South Bihar University secured a patent."),
+      "South Bihar University secured a patent.")
+check("but the same words mid-sentence are left alone",
+      s.lede_summary("The project is in short supply of panels."),
+      "The project is in short supply of panels.")
+
+# the richer of feed description and scraped body wins
+check("the scraped body beats a stub description",
+      s.best_summary_source("T", "Read on.", _long), _long)
+check("a full description beats an empty body",
+      s.best_summary_source("T", _long, ""), _long)
+check("the headline is the last resort",
+      s.best_summary_source("Headline only", "", ""), "Headline only")
+
+print("\n=== the model rewrites the lede, and failure keeps it ===")
+_clusters = [{"title": "T%d" % i, "url": "u%d" % i, "state": "bihar",
+              "sources": ["EQ Mag"], "summary": "lede %d" % i,
+              "fingerprint": set()} for i in range(3)]
+s.summarize_clusters(_clusters)
+check("the model's sentence replaces the lede",
+      [c["summary"] for c in _clusters],
+      ["Model sentence 0.", "Model sentence 1.", "Model sentence 2."])
+
+FAIL_SUMMARY = True
+_clusters = [{"title": "T", "url": "u", "state": "bihar", "sources": ["EQ Mag"],
+              "summary": "the lede survives", "fingerprint": set()}]
+s.summarize_clusters(_clusters)
+check("a rate-limited summary keeps the lede",
+      _clusters[0]["summary"], "the lede survives")
+check("and the story is still in the digest", len(_clusters), 1)
+FAIL_SUMMARY = False
+
+# a model that answers with the wrong shape must not blank the summary
+_saved_create2 = groq.Groq.create
+def _garbage(self, model, messages, **kw):
+    if "Summarise each news item" in messages[0]["content"]:
+        return types.SimpleNamespace(choices=[types.SimpleNamespace(
+            message=types.SimpleNamespace(content='{"summaries": {"0": ""}}'))])
+    return _saved_create2(self, model, messages, **kw)
+groq.Groq.create = _garbage
+_clusters = [{"title": "T", "url": "u", "state": "bihar", "sources": ["EQ Mag"],
+              "summary": "the lede survives", "fingerprint": set()}]
+s.summarize_clusters(_clusters)
+check("an empty model answer keeps the lede too",
+      _clusters[0]["summary"], "the lede survives")
+groq.Groq.create = _saved_create2
+
+# summaries must never outrank the calls that decide whether news IS news
+s.budget.llm_calls = s.MAX_LLM_CALLS_PER_RUN
+_clusters = [{"title": "T", "url": "u", "state": "bihar", "sources": ["EQ Mag"],
+              "summary": "the lede survives", "fingerprint": set()}]
+s.summarize_clusters(_clusters)
+check("an exhausted budget spends nothing on polish",
+      s.budget.llm_calls, s.MAX_LLM_CALLS_PER_RUN)
+check("and the lede still stands", _clusters[0]["summary"], "the lede survives")
+s.budget.llm_calls = 0
+
+print("\n=== the summary reaches both outputs ===")
+_one = [{"title": "SECI tenders 1200 MW", "url": "http://a", "state": "bihar",
+         "sources": ["EQ Mag"], "summary": "SECI invited bids for 1,200 MW.",
+         "fingerprint": set()}]
+_mail = s.build_email(_one, 1, False, diagnostics=False)
+_md = s.build_report(_one, 1, False, diagnostics=False)
+check("the email carries the summary", "SECI invited bids for 1,200 MW." in _mail, True)
+check("the report carries the summary", "SECI invited bids for 1,200 MW." in _md, True)
+check("the email still carries the link", "http://a" in _mail, True)
+check("the report still links the headline",
+      "[SECI tenders 1200 MW](http://a)" in _md, True)
+# a story the model never got to must still print
+_bare = [{"title": "No summary here", "url": "http://b", "state": "bihar",
+          "sources": ["EQ Mag"], "summary": "", "fingerprint": set()}]
+check("a summary-less story still lists",
+      "No summary here" in s.build_email(_bare, 1, False, diagnostics=False), True)
+check("and in the report too",
+      "No summary here" in s.build_report(_bare, 1, False, diagnostics=False), True)
+
+print("\n=== a full run puts a summary in front of the client ===")
+os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("sm1"))
+s = load(); SENT.clear(); s.main()                       # seeds
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("sm2"))
+s = load(); SENT.clear(); s.main()
+_client = SENT[0]["textContent"]
+check("the client digest has a summary line", "Model sentence 0." in _client, True)
+check("summaries cost one batched call, not one per story",
+      s.budget.llm_calls <= 2 + s.MAX_SUMMARY_CALLS_PER_RUN, True)
+
+print("\n=== SUMMARY_ENABLED=0 falls back to the lede everywhere ===")
+os.environ.update(DB_PATH=tempfile.mktemp(suffix=".db"), SUMMARY_ENABLED="0")
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("sm3"))
+s = load(); SENT.clear(); s.main()                       # seeds
+feedparser.parse = lambda *a, **k: types.SimpleNamespace(entries=fresh_batch("sm4"))
+s = load(); SENT.clear(); s.main()
+_client = SENT[0]["textContent"]
+check("no model sentence when summaries are off", "Model sentence" in _client, False)
+# The Bihar cluster keeps the fullest lede any of its outlets carried, which
+# here is the second headline's, not the first's.
+check("but the feed's own lede is still there",
+      "solar tender Bihar announced" in _client, True)
+check("and the Sikkim story keeps its own",
+      "solar project Sikkim" in _client, True)
+os.environ.pop("SUMMARY_ENABLED", None)
 
 print("\n" + ("ALL PASS" if ok else "FAILURES ABOVE"))
 sys.exit(0 if ok else 1)

@@ -12,10 +12,23 @@ merely moved is fixed instead of dropped.
 
 A feed counts as working only if it parses AND carries at least one entry, the
 same bar verify_feeds.py uses, so an HTML error page served at /feed/ is a miss.
+
+Failing that bar is not the same as being broken, and the report keeps the three
+apart, because only one of them is a repair job:
+
+  * **dead**      - no feed at the URL and none found on the domain. Fix the URL.
+  * **empty**     - a well-formed feed carrying no items. The link is correct;
+                    a publisher between issues or an event site looks like this
+                    and may carry items tomorrow. Nothing to fix.
+  * **rate-limited** - HTTP 429. Not a verdict on the feed at all; re-run later.
+
+Only *dead* feeds get their URL rewritten or their `verified` flag cleared.
 """
 
 import argparse
 import json
+
+import feedparser
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from urllib.parse import urljoin, urlparse
@@ -28,6 +41,47 @@ def site_root(url):
     return f"{p.scheme}://{p.netloc}/"
 
 
+def rate_limited(url):
+    """True if the host is currently refusing us for volume rather than for cause.
+
+    A 429 says "you are asking too often", which is the one failure this script
+    causes itself: probing a dead feed costs up to twenty more requests to the
+    same domain, and running the whole config at eight workers is enough to trip
+    JMK and Renewable Mirror. Both were read perfectly by the tracker minutes
+    earlier. Reporting that as a dead feed sends someone hunting for a
+    replacement URL for a feed that works.
+    """
+    try:
+        return vf.fetch(url).status_code == 429
+    except Exception:
+        return False
+
+
+def empty_feed(url):
+    """Details if `url` serves a well-formed feed that currently has no items.
+
+    An empty feed is not a broken one. The URL is right, the server answers, the
+    document parses - there is simply nothing in it today, which is ordinary for
+    an event site or a publisher between issues, and it may carry items tomorrow.
+    Counting that as dead sends someone hunting for a replacement URL for a feed
+    that is working exactly as designed. `vf.validate` holds the stricter
+    at-least-one-item bar on purpose, because it answers a different question:
+    whether a publication is worth ADDING in the first place.
+    """
+    try:
+        r = vf.fetch(url)
+        if r.status_code >= 400:
+            return None
+        parsed = feedparser.parse(r.content)
+        if parsed.entries or parsed.bozo or not parsed.version:
+            return None
+        return {"title": (parsed.feed.get("title") or "").strip()[:60],
+                "last_build": (parsed.feed.get("updated")
+                               or parsed.feed.get("published") or "").strip()[:40]}
+    except Exception:
+        return None
+
+
 def check(site):
     """Return the site dict annotated with what we found."""
     out = dict(site)
@@ -37,6 +91,23 @@ def check(site):
     current = vf.validate(site["rss"])
     if current:
         out["_found"], out["_how"] = current, "configured URL"
+    elif rate_limited(site["rss"]):
+        # Not proven dead, and hunting for a replacement would only dig deeper
+        # into the same rate limit. Leave the configured URL alone.
+        out["_status"] = "rate-limited (HTTP 429) - not proven dead, re-run later"
+        out["_tried"] = 0
+        out["_rate_limited"] = True
+        print(f"WAIT {site['name'][:38]:<38} {out['_status']}", flush=True)
+        return out
+    elif (blank := empty_feed(site["rss"])):
+        # A working feed with nothing in it today. The link is right, so there
+        # is nothing here to repair.
+        when = blank["last_build"] or "no build date"
+        out["_status"] = f"valid feed, 0 items ({when})"
+        out["_tried"] = 0
+        out["_empty"] = True
+        print(f"IDLE {site['name'][:38]:<38} {out['_status']}", flush=True)
+        return out
     else:
         # The configured URL is dead. Look for a working one on the same domain.
         root = site_root(site["rss"])
@@ -92,9 +163,19 @@ def main():
 
     good = [r for r in results if r["_how"] == "configured URL"]
     fixed = [r for r in results if r["_how"] and r["_how"] != "configured URL"]
-    dead = [r for r in results if not r["_found"]]
+    # A rate limit is not a verdict. These stay out of the dead count so a
+    # transient 429 never reads as a feed to go and replace.
+    waiting = [r for r in results if not r["_found"] and r.get("_rate_limited")]
+    # A valid feed with no items is neither working nor broken: the link is
+    # correct and there is nothing to repair, so it is counted on its own rather
+    # than inflating the dead list with feeds nobody can fix because nothing is
+    # wrong with them.
+    idle = [r for r in results if not r["_found"] and r.get("_empty")]
+    dead = [r for r in results if not r["_found"]
+            and not r.get("_rate_limited") and not r.get("_empty")]
 
-    print(f"\n{len(good)} already correct · {len(fixed)} repaired · {len(dead)} dead")
+    print(f"\n{len(good)} already correct · {len(fixed)} repaired · "
+          f"{len(dead)} dead · {len(idle)} empty · {len(waiting)} rate-limited")
 
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     lines = [
@@ -121,6 +202,26 @@ def main():
         lines.append(f"| {r['name']} | {r['rss']} | {r.get('_tried', 0)} | "
                      f"{r.get('_status', 'n/a')} |")
 
+    if idle:
+        lines += ["", "## Valid feed, no items - not broken", "",
+                  "These serve a well-formed feed at the configured URL and it "
+                  "currently holds no items. The link is correct and there is "
+                  "nothing to repair; a publisher between issues, or an event "
+                  "site, looks exactly like this and may carry items tomorrow.", "",
+                  "| Feed | Configured URL | Status |", "|---|---|---|"]
+        for r in idle:
+            lines.append(f"| {r['name']} | {r['rss']} | {r.get('_status', '')} |")
+
+    if waiting:
+        lines += ["", "## Rate-limited - unproven, not dead", "",
+                  "These answered HTTP 429 while this script was running. That is a "
+                  "verdict on our request rate, not on the feed: probing one dead "
+                  "feed costs up to twenty requests to the same host. Re-run for "
+                  "these alone before touching their URLs.", "",
+                  "| Feed | Configured URL |", "|---|---|"]
+        for r in waiting:
+            lines.append(f"| {r['name']} | {r['rss']} |")
+
     with open(args.report, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     print(f"Wrote {args.report}")
@@ -135,6 +236,12 @@ def main():
         if r["_found"]:
             entry["rss"] = r["_found"]["url"]
             entry["verified"] = True
+        elif r.get("_rate_limited") or r.get("_empty"):
+            # Never rewrite a flag, and never drop a feed, on a 429 or on an
+            # empty feed. In the first case we were throttled rather than
+            # answered; in the second the URL is correct and only the contents
+            # are empty. Neither disproves what the config already says.
+            pass
         else:
             if args.drop_dead:
                 continue

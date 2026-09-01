@@ -7,7 +7,7 @@
       "portals": [
         {
           "label": "e-tender portal",
-          "url": "https://www.eproc2.bihar.gov.in/",
+          "url": "https://eproc2.bihar.gov.in/",
           "kind": "etender"
         },
         {
@@ -17,7 +17,7 @@
         },
         {
           "label": "REDA",
-          "url": "https://breda.bihar.gov.in/",
+          "url": "https://breda.co.in/",
           "kind": "agency"
         },
         {
@@ -110,7 +110,7 @@
         },
         {
           "label": "REDA",
-          "url": "https://wbredda.org/",
+          "url": "https://wbreda.org/",
           "kind": "agency"
         },
         {
@@ -225,7 +225,7 @@
         },
         {
           "label": "REDA",
-          "url": "https://mprenewable.nic.in/",
+          "url": "https://mpuvn.mp.gov.in/",
           "kind": "agency"
         },
         {
@@ -369,7 +369,7 @@
       "portals": [
         {
           "label": "e-tender portal",
-          "url": "https://sikkimtenders.gov.in/",
+          "url": "https://sikkimtender.gov.in/",
           "kind": "etender"
         },
         {
@@ -391,7 +391,7 @@
       "portals": [
         {
           "label": "e-tender portal",
-          "url": "https://www.gov.bt/",
+          "url": "https://www.egp.gov.bt/",
           "kind": "etender"
         },
         {
@@ -401,7 +401,7 @@
         },
         {
           "label": "REDA",
-          "url": "https://energy.gov.bt/",
+          "url": "https://www.moenr.gov.bt/",
           "kind": "agency"
         }
       ]

@@ -19,6 +19,7 @@ import json
 import re
 import sqlite3
 import requests
+import textwrap
 import os
 import sys
 from datetime import datetime, timedelta, timezone
@@ -145,6 +146,21 @@ LEDE_CHARS = int(os.getenv("LEDE_CHARS", "400"))
 # Pradesh because character 6648 of 7896 read "...student at Madanapalle
 # Institute of Technology, Andhra Pradesh".
 BODY_HEAD_CHARS = int(os.getenv("BODY_HEAD_CHARS", "1500"))
+
+# Every story in the digest carries a summary. Two tiers, because a summary must
+# never cost news: the free one is the article's own lede, taken from the feed
+# description or the scraped body, and it is always filled in. The LLM pass then
+# rewrites those into one clean sentence each, in batches, and anything it fails
+# to return simply keeps its lede. Set SUMMARY_ENABLED=0 for lede-only.
+SUMMARY_ENABLED = os.getenv("SUMMARY_ENABLED", "1") == "1"
+SUMMARY_CHARS = int(os.getenv("SUMMARY_CHARS", "260"))
+# Stories per summarising call. Batching is what keeps this affordable: one call
+# per story would double the run's LLM usage and compete with state extraction,
+# which is the call that decides whether an article is news at all.
+SUMMARY_BATCH = int(os.getenv("SUMMARY_BATCH", "8"))
+# A hard ceiling of its own, on top of the shared budget, so a big news day
+# cannot spend the whole LLM allowance on polish.
+MAX_SUMMARY_CALLS_PER_RUN = int(os.getenv("MAX_SUMMARY_CALLS_PER_RUN", "6"))
 
 # Phase 2 - government tender portals. Always on: tenders are half of what this
 # digest is for. Collection stays wrapped whole, so a portal failing still costs
@@ -451,6 +467,94 @@ def topical_text(title, desc):
     return "%s %s" % (title, (desc or "")[:LEDE_CHARS])
 
 
+# Furniture that leads a feed description or a scraped body and says nothing
+# about the story: a byline, a share prompt, a date stamp, a "read more" tail.
+#
+# Every alternative matches only itself. An earlier version ended each one with
+# `[^.]*\.?` to "run to the end of the sentence", which on "Share this
+# Advertisement A 250 MW plant opened." swallowed the entire summary - the
+# greedy tail ate the story along with the furniture. Bounded patterns plus the
+# never-empty guard in lede_summary are what keep that from happening again.
+SUMMARY_NOISE_RE = re.compile(
+    r"^\s*(?:"
+    r"share (?:this|it|on(?: \w+){0,2})"
+    r"|read more"
+    r"|in short"                          # EQ Mag opens every description with it
+    r"|advertisements?"
+    r"|sponsored(?: content)?"
+    r"|subscribe(?: now)?"
+    r"|by [^\W\d_][\w.'’-]*(?: [^\W\d_][\w.'’-]*){0,3}(?=\s*[|–—-]\s)"
+    r"|(?:published|updated|posted)(?: on)?\s*:?\s*[^|–—.]{0,40}(?=[|–—])"
+    r")\s*[:|–—-]?\s*",
+    re.I)
+
+SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s")
+
+# Feeds mark their own truncation, and each publisher does it differently:
+# Renewable Watch ends every description "[...]", others use "..." or a bare
+# ellipsis, some append "Read more". They all mean the same thing, so they are
+# normalised to one ellipsis rather than reaching the client four ways.
+FEED_TRUNCATION_RE = re.compile(
+    r"[\s.]*(?:\[\s*(?:\.\.\.|…)\s*\]|\.\.\.|…)\s*(?:read more|continue reading)?"
+    r"[\s.]*$", re.I)
+
+
+def lede_summary(text, limit=None):
+    """The opening of an article, trimmed at a sentence boundary.
+
+    This is the summary every story is guaranteed to have. It costs nothing -
+    the text is already in hand, either as the feed's own description or as the
+    body of an article the run scraped anyway to find its state - so a story
+    still reads as a story when the LLM is rate-limited, keyless or switched off.
+    """
+    limit = SUMMARY_CHARS if limit is None else limit
+    clean = strip_html(text or "")
+    # A feed can lead with several pieces of furniture ("By A Correspondent |
+    # Published: ... | Share this"), so strip until nothing more comes off.
+    # Stripping never empties the text: a summary that reads as pure boilerplate
+    # is still better than a blank line under a headline, and a pattern that
+    # overreaches must not be able to delete a story's only description.
+    while True:
+        trimmed = SUMMARY_NOISE_RE.sub("", clean, count=1)
+        if trimmed == clean or not trimmed.strip():
+            break
+        clean = trimmed
+    # The publisher's own "there is more" marker, in whichever dialect, so the
+    # length test below measures the story rather than the furniture.
+    truncated_by_feed = bool(FEED_TRUNCATION_RE.search(clean))
+    if truncated_by_feed:
+        stripped = FEED_TRUNCATION_RE.sub("", clean).strip()
+        clean = stripped or clean
+
+    if not clean or limit <= 0:
+        return clean[:max(limit, 0)] if limit > 0 else ""
+    if len(clean) <= limit:
+        return clean + ("…" if truncated_by_feed else "")
+
+    window = clean[:limit + 1]
+    # Prefer a whole sentence, but only if it is a real summary rather than a
+    # three-word fragment; otherwise cut on a word and mark the truncation.
+    ends = [m.start() for m in SENTENCE_END_RE.finditer(window)]
+    if ends and ends[-1] >= limit // 3:
+        return window[:ends[-1]].strip()
+    cut = clean[:limit]
+    space = cut.rfind(" ")
+    return (cut[:space] if space > limit // 2 else cut).rstrip(" ,;:-–") + "…"
+
+
+def best_summary_source(title, desc, content):
+    """The richest text available for summarising one article.
+
+    A scraped body beats a feed description, but not every feed description is
+    poorer than every body: some feeds carry the full first paragraph while a
+    scrape that hit a paywall returns a line of navigation. So take whichever is
+    longer, and fall back to the headline so the field is never empty.
+    """
+    candidates = [strip_html(t or "") for t in (content, desc)]
+    best = max(candidates, key=len) if any(candidates) else ""
+    return best or (title or "")
+
+
 # Words that mark the next few tokens as a place rather than a name. "MB Power
 # Madhya Pradesh Ltd" is a company; "project in Agar Malwa, Madhya Pradesh" is a
 # location, and only the second says where the work is.
@@ -692,6 +796,85 @@ Every index from 0 to {len(items) - 1} must appear exactly once.
         return singletons
 
 
+# ---------------- SUMMARIES ----------------
+# How much of an article the summariser is shown. Enough for the lede and the
+# figures in it; past that you are paying tokens for a bidder list.
+SUMMARY_SOURCE_CHARS = 900
+
+
+def summarize_clusters(clusters):
+    """Give every story in the digest a one-sentence summary, in place.
+
+    Fails open at the level of the individual story, not the batch: each cluster
+    already carries its lede summary before this runs, so a rate limit, bad JSON,
+    a dropped index or a dead key leaves that lede standing and the digest is
+    still complete. Nothing here can add, drop or reorder a story.
+
+    Runs after clustering deliberately - only the stories that actually reach the
+    digest are summarised, which is the smallest number of calls that can do the
+    job, and state extraction has already taken the budget it needs by then.
+    """
+    if not clusters:
+        return clusters
+
+    pending = [c for c in clusters if not c.get("summary_source_is_llm")]
+    if not SUMMARY_ENABLED or not STRONG_MODEL:
+        # The run log is the only place this is visible, so say which of the two
+        # it was: one is a setting, the other is a broken key or a retired model.
+        why = "SUMMARY_ENABLED=0" if not SUMMARY_ENABLED else "no usable model"
+        print("[SUMMARY] %d story(ies) keep their lede (%s)" % (len(pending), why))
+        return clusters
+
+    calls = improved = 0
+    for start in range(0, len(pending), max(SUMMARY_BATCH, 1)):
+        batch = pending[start:start + max(SUMMARY_BATCH, 1)]
+        if calls >= MAX_SUMMARY_CALLS_PER_RUN or not budget.can_call_llm():
+            print("[SUMMARY] budget reached — %d story(ies) keep their lede"
+                  % len(pending[start:]))
+            break
+
+        budget.llm_calls += 1
+        calls += 1
+        listing = "\n\n".join(
+            "%d. %s\n%s" % (i, item["title"],
+                            (item.get("summary") or "")[:SUMMARY_SOURCE_CHARS])
+            for i, item in enumerate(batch))
+
+        prompt = f"""
+Summarise each news item below in ONE sentence of at most 35 words.
+
+Write for a solar and battery-storage developer in India: keep capacities,
+tariffs, money, company and state names, and say what actually happened. Do not
+add anything that is not in the text, and do not editorialise.
+
+Return ONLY JSON in this exact form, with a key for every index 0 to {len(batch) - 1}:
+{{"summaries": {{"0": "...", "1": "..."}}}}
+
+{listing}
+"""
+        try:
+            response = client.chat.completions.create(
+                model=STRONG_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+            )
+            answers = json.loads(
+                response.choices[0].message.content.strip()).get("summaries", {})
+            for i, item in enumerate(batch):
+                text = answers.get(str(i)) or answers.get(i)
+                if isinstance(text, str) and text.strip():
+                    item["summary"] = strip_html(text.strip())
+                    item["summary_source_is_llm"] = True
+                    improved += 1
+        except Exception as e:
+            # The lede is already in place, so this costs polish and nothing else.
+            print("[SUMMARY ERROR]", e, "-> keeping the lede for this batch")
+
+    print("[SUMMARY] %d/%d story(ies) summarised by the model in %d call(s)"
+          % (improved, len(clusters), calls))
+    return clusters
+
+
 # ---------------- FEEDS ----------------
 def process_site(site, seeding):
     """Collect matching articles from one feed.
@@ -793,6 +976,7 @@ def process_site(site, seeding):
             "title": title,
             "url": url,
             "state": state,
+            "summary": lede_summary(best_summary_source(title, desc, content)),
             "fingerprint": numeric_fingerprint(f"{title} {content[:1500]}"),
         })
 
@@ -964,12 +1148,16 @@ def build_report(clusters, reviewed, seeding, tender_items=None,
             for cluster in entries:
                 n += 1
                 out.append("%d. **[%s](%s)**" % (n, cluster["title"], cluster["url"]))
+                if cluster.get("summary"):
+                    out.append("")
+                    out.append("   %s" % cluster["summary"])
+                out.append("")
                 sources = sorted({s for s in cluster["sources"]})
                 if len(sources) > 1:
-                    out.append("   %s — also covered by %s"
+                    out.append("   *%s — also covered by %s*"
                                % (sources[0], ", ".join(sources[1:])))
                 else:
-                    out.append("   %s" % sources[0])
+                    out.append("   *%s*" % sources[0])
                 out.append("")
 
     if not seeding:
@@ -1045,6 +1233,18 @@ def write_report(body, path=None):
         print("[REPORT ERROR] %s: %s" % (type(e).__name__, e))
         return False
 
+# The email is plain text, so nothing wraps it for us. A summary on one long
+# line renders as a single unreadable run in most mail clients.
+EMAIL_WRAP = int(os.getenv("EMAIL_WRAP", "76"))
+
+
+def _wrap_summary(text, indent="     ", width=None):
+    """A summary as indented plain-text lines, wrapped on word boundaries."""
+    width = EMAIL_WRAP if width is None else width
+    return textwrap.wrap(text, width=max(width, 20), initial_indent=indent,
+                         subsequent_indent=indent) or []
+
+
 def build_email(clusters, reviewed, seeding, tender_items=None,
                 tender_errors=None, diagnostics=True):
     today = datetime.now(timezone(timedelta(hours=5, minutes=30))).strftime("%d %b %Y")
@@ -1085,6 +1285,8 @@ def build_email(clusters, reviewed, seeding, tender_items=None,
             for cluster in entries:
                 n += 1
                 lines.append(f" {n:>2}. {cluster['title']}")
+                if cluster.get("summary"):
+                    lines += _wrap_summary(cluster["summary"])
                 lines.append(f"     {cluster['url']}")
 
                 sources = sorted({s for s in cluster["sources"]})
@@ -1092,6 +1294,7 @@ def build_email(clusters, reviewed, seeding, tender_items=None,
                     lines.append(f"     {sources[0]} · also: {', '.join(sources[1:])}")
                 else:
                     lines.append(f"     {sources[0]}")
+                lines.append("")
             lines.append("")
 
     # ---- TENDERS section ----
@@ -1189,12 +1392,19 @@ def main():
             "url": primary["url"],
             "state": primary["state"],
             "sources": [m["site"] for m in members],
+            # The fullest lede any outlet in the cluster carried. One outlet
+            # running a two-line stub is no reason to summarise the story from
+            # it when another ran four paragraphs.
+            "summary": max((m.get("summary") or "" for m in members), key=len),
             "fingerprint": primary["fingerprint"],
         })
 
     if MAX_ITEMS_PER_EMAIL and len(clusters) > MAX_ITEMS_PER_EMAIL:
         print(f"[LIMIT] {len(clusters)} stories, capping at {MAX_ITEMS_PER_EMAIL}")
         clusters = clusters[:MAX_ITEMS_PER_EMAIL]
+
+    # After the cap, so nothing is summarised that will not be sent.
+    summarize_clusters(clusters)
 
     tender_items, tender_errors = ([], [])
     if not seeding:

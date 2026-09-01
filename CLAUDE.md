@@ -9,8 +9,8 @@ Every run writes `report.md`. Email is a second, optional channel.
 
 ```bash
 pip install -r requirements.txt
-python test_script.py      # 44 checks, offline
-python test_tenders.py     # 57 checks, offline
+python test_script.py      # 167 checks, offline
+python test_tenders.py     # 115 checks, offline
 ```
 
 Both suites stub Groq, newspaper3k, Brevo and feedparser — no network, no keys,
@@ -40,13 +40,50 @@ news. Do not "simplify" these into one path; they are different on purpose.
    changes between deploys. Nothing in this repo can fix it; it needs the
    restriction removed at app.brevo.com/security/auth. Run with
    `EMAIL_ENABLED=0` until then.
-2. **13 of 43 feeds fail** (30 work), verified live on 22 Aug 2026 by
-   `check_config_feeds.py` (writes `config_feed_report.md`):
+2. **31 feeds configured; 29 carry items, 2 are empty.** Verified live on
+   2 Sep 2026 through the tracker's own fetch path (`check_config_feeds.py`
+   writes `config_feed_report.md`).
+
+   The 11 that were broken were **dropped from `config.json`** the same day.
+   They are listed in `link_health.xlsx`, sheet *Dropped feeds*, so the record
+   survives the removal — do not re-add one without re-probing it.
+
+   **An empty feed is not a broken one, and the three states are kept apart.**
+   India Energy Storage Week and Construction World serve well-formed RSS 2.0 at
+   the configured URL — it parses, `bozo` is false, IESW even carries
+   `lastBuildDate: 15 Jul 2026` — and it currently holds no items. The link is
+   right and there is nothing to repair; an event site or a publisher between
+   issues looks exactly like this. Counting them as dead sends someone hunting
+   for a replacement URL for a feed that is working as designed. The same logic
+   already applies to a 429. Only genuinely dead feeds get a URL rewrite.
+
+   The 11 that really are broken:
    - 2 are Cloudflare **403** that nothing shifts — Renewable Energy World and
-     Battery Industry refuse every impersonation profile (chrome/safari/firefox).
-   - 2 are **404** (Energy Next, Power Engineering) — the path is simply wrong.
-   - 8 return **HTML, not a feed**, at every conventional path.
-   - 1 times out (Construction World).
+     Battery Industry refuse all twelve impersonation profiles
+     (chrome/safari/edge/firefox).
+   - 3 are **404** (Energy Next, Power Engineering, Sustainability Magazine) —
+     the path is simply wrong. Sustainability Magazine looks like a Cloudflare
+     block to a plain fetch, but impersonation gets through to a real 404.
+   - 6 return **HTML, not a feed**: Akshay Urja, Renewable Energy Magazine
+     (a zero-byte body), Energy Infra Post, The Battery Magazine, Equipment
+     India, Energy Industry Review.
+
+   **None of the 11 has a recoverable URL — this has been checked exhaustively,
+   so don't repeat it.** Every one was swept over ~30 conventional feed paths
+   *and* re-swept with Chrome TLS impersonation on every request, plus homepage
+   autodiscovery. Nothing was found. Energy Next is the one that looks like a
+   lead and is not: it advertises `energynext.com/home?format=rss`, which parses
+   but is empty, and the site has no news collection left at all — its whole nav
+   is contact/team/mega. These are broken at the publisher, not at our end, so
+   the only decision left is whether to keep paying one request each per run for
+   them.
+
+   **Measure feeds through the production fetch path, not a plain `requests`
+   one.** `verify_feeds.fetch` retries a 403 with `curl_cffi` exactly as
+   `script.py` does, because without it the checker called 25 of 42 feeds dead
+   while the tracker was reading 29 — it was 403'd on the *homepage* probe for
+   feeds that work fine. The `verified` flags in `config.json` are documentation
+   only; nothing reads them at runtime.
 
    **The 403s were never about Railway's IP.** The blocked publishers answer
    with `cf-mitigated: challenge`: Cloudflare rejects Python's TLS handshake
@@ -76,6 +113,34 @@ news. Do not "simplify" these into one path; they are different on purpose.
    The readable tenders come from the **agency and DISCOM** sites, which is why
    those kinds are now read by default.
 
+5. **Seven portal URLs were wrong and six are now fixed** (2 Sep 2026). They had
+   been failing DNS outright — not flaky sites, hosts with no address at all,
+   which no retry or TLS setting can reach. Verified replacements:
+
+   | State | Portal | Was | Now | Result |
+   |---|---|---|---|---|
+   | Bihar | REDA | `breda.bihar.gov.in` | `breda.co.in` | **6 tenders** |
+   | West Bengal | REDA | `wbredda.org` | `wbreda.org` | **3 tenders** |
+   | Bhutan | agency | `energy.gov.bt` | `www.moenr.gov.bt` | **1 tender** |
+   | Bihar | e-tender | `www.eproc2.bihar.gov.in` | `eproc2.bihar.gov.in` | resolves, captcha-gated |
+   | Sikkim | e-tender | `sikkimtenders.gov.in` | `sikkimtender.gov.in` | resolves, GePNIC |
+   | Madhya Pradesh | REDA | `mprenewable.nic.in` | `mpuvn.mp.gov.in` | resolves, JS-rendered |
+   | Bhutan | e-tender | `www.gov.bt` | `www.egp.gov.bt` | 42s → 3s, real e-GP portal |
+
+   `wbredda.org` was a **typo** for `wbreda.org`. The last four recover no
+   tenders yet, but a host that answers reports an honest reason instead of
+   masquerading as a network fault, and the Bhutan swap alone takes ~40 seconds
+   off every run.
+
+   **Only `power.nagaland.gov.in` is still unresolved.** Every candidate tried
+   (`dop.`/`nreda.`/`neda.nagaland.gov.in`, `nagalandpower.gov.in`) also fails
+   DNS; it needs the real URL from the owner's spreadsheet.
+
+   Live tender yield after the fixes: **16 of 56 portals, up from 13.** The
+   other 40 are 11 captcha-gated GePNIC portals, 1 DNS failure (Nagaland),
+   4 HTTP errors (Odisha and UP e-tender stubs, `www.wbsedcl.in` 503,
+   `www.bpc.bt` 500), and ~24 reachable portals with nothing matching that day.
+
 `verify_feeds.py` (discovers feeds for `publications.json`) and
 `probe_tenders.py` (categorises portals, saves their HTML) are both best run
 from a normal connection: government portals and several publishers block
@@ -95,13 +160,19 @@ One run, in order:
    already sent this week.
 3. **Clustering** — one LLM call groups the whole run by underlying event, so the
    same tender from ten outlets becomes one line.
-4. **Tenders and government notices** — always run; harvest links from each
+4. **Summaries** — every story in the digest gets one sentence saying what
+   happened. Two tiers, and the free one always runs first: `lede_summary`
+   takes the article's own opening, from the feed description or from the body
+   the run already scraped to find the state. `summarize_clusters` then rewrites
+   those with the model, in batches of `SUMMARY_BATCH`, and anything it does not
+   return keeps its lede.
+5. **Tenders and government notices** — always run; harvest links from each
    portal in parallel and keep those that read as procurement *or* as a notice
    (a tariff order, a net-metering circular, a policy amendment). The notices
    matter as much as the tenders: they change what is worth bidding on.
    There is no on/off flag: collection is wrapped whole, so a portal failing
    costs the tender section only and never the news.
-5. **One report** (`report.md`), always written, grouped by state, with a health
+6. **One report** (`report.md`), always written, grouped by state, with a health
    section. Optionally also one email.
 
 ## Invariants — do not break these
@@ -154,6 +225,19 @@ One run, in order:
   (`gpt-oss-120b`) is one call a run on a separate quota and never binds.
 - **Scrape failures and budget exhaustion are deferred, not dropped** — counted
   in `budget.deferred` and left unmarked so the next run retries them.
+- **A summary is never allowed to cost a story.** Every cluster carries its
+  `lede_summary` before the model is asked anything, so a 429, bad JSON, a
+  dropped index, an empty string or `SUMMARY_ENABLED=0` all leave a real
+  sentence in place. `summarize_clusters` may only overwrite `summary`; it must
+  never add, drop or reorder a cluster. It also runs *after* clustering and the
+  item cap, so only stories that will actually be sent are paid for, and it
+  yields to `budget.can_call_llm()` — state extraction decides whether an
+  article is news at all, and must never be starved by polish.
+- **`lede_summary` never returns empty for non-empty input.** The boilerplate
+  stripper is bounded and reverts if it would blank the text. An early version
+  ended each pattern with `[^.]*\.?` to "run to the end of the sentence", and on
+  "Share this Advertisement A 250 MW plant opened." it deleted the story with
+  the furniture.
 
 ## Gotchas
 
@@ -189,7 +273,7 @@ One run, in order:
   and chose to keep the list unchanged, including the two broken entries. The
   news half is meant to be a solar/BESS project-and-financing digest. Don't
   re-propose edits to `filters.keywords` without being asked.
-- **The keyword gate is what makes 43 feeds affordable.** Without it every
+- **The keyword gate is what makes the feed list affordable.** Without it every
   off-topic article costs a scrape and an LLM call. Measured live: it keeps
   ~50% of entries (187 of 375).
 - **Three rules keep passing mentions out.** All three came from reading a live
@@ -228,8 +312,8 @@ One run, in order:
 
 ## Config
 
-`config.json` — feeds (with `verified` flags), news keywords, tender keywords,
-18 states.
+`config.json` — 31 feeds (with `verified` flags), news keywords, tender
+keywords, 18 states.
 `sources.json` — 18 regions × 56 tender portals, generated from the owner's
 spreadsheet.
 `publications.json` — the 42 candidate publications with focus and site URL.

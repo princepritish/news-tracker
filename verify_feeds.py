@@ -32,6 +32,17 @@ from urllib.parse import urljoin
 import feedparser
 import requests
 
+# script.py retries a 403 with Chrome's real TLS fingerprint, which is the only
+# thing that gets past Cloudflare's bot management. Without the same fallback
+# here, this script reports feeds as dead that the tracker reads perfectly:
+# measured on 2 Sep 2026, a plain fetch called 25 of 42 dead while the tracker's
+# own fetch path read 29 - PV Tech, Energy Storage News and Solar Builder among
+# them. A checker that disagrees with production is worse than no checker.
+try:
+    from curl_cffi import requests as impersonator
+except Exception:
+    impersonator = None
+
 UA = {
     "User-Agent": (
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -64,7 +75,16 @@ TIMEOUT = 25
 
 
 def fetch(url):
-    return requests.get(url, headers=UA, timeout=TIMEOUT, allow_redirects=True)
+    """Fetch a URL exactly the way script.py does, impersonation fallback included."""
+    r = requests.get(url, headers=UA, timeout=TIMEOUT, allow_redirects=True)
+    if r.status_code == 403 and impersonator is not None:
+        try:
+            r2 = impersonator.get(url, impersonate="chrome", timeout=TIMEOUT)
+            if r2.status_code < 400:
+                return r2
+        except Exception:
+            pass                              # keep the original 403
+    return r
 
 
 def validate(url):

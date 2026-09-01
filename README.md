@@ -55,6 +55,32 @@ after Brevo accepts it.
   A keyword past this point is treated as a passing mention, which is what
   keeps bidder lists and "related articles" tails out of the digest.
 
+### Article summaries
+
+Every story in the digest carries one sentence saying what happened, so the
+digest can be read without opening each link.
+
+It is built in two tiers, and the first one is free and always runs: the
+article's own opening, taken from the feed description or from the body the run
+already scraped to find the state, stripped of bylines, share prompts and each
+publisher's own truncation marker. The model then rewrites those into one clean
+sentence per story — in batches, after clustering, so only stories that will
+actually be sent are paid for.
+
+**The model tier can fail without costing you anything.** A rate limit, bad
+JSON, a dead key or `SUMMARY_ENABLED=0` all leave the extracted lede in place;
+no story ever loses its summary, and none is ever dropped or reordered by
+summarising. Summaries also yield to the LLM budget, because state extraction
+decides whether an article is news at all and must not be starved by polish.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SUMMARY_ENABLED` | `1` | `0` uses the extracted lede only, no LLM calls |
+| `SUMMARY_CHARS` | `260` | Longest extracted lede before it is trimmed |
+| `SUMMARY_BATCH` | `8` | Stories summarised per LLM call |
+| `MAX_SUMMARY_CALLS_PER_RUN` | `6` | Ceiling on summarising calls, on top of the shared budget |
+| `EMAIL_WRAP` | `76` | Where summary text wraps in the plain-text email |
+
 ## Phase 2 — government tenders
 
 `sources.json` holds 18 regions from the tender database: e-tender portal, REDA
@@ -87,6 +113,19 @@ Tender collection makes **no LLM calls**, and is wrapped so any failure — a de
 portal, a malformed page, all 36 portals down at once — costs you the tender
 section only, never the news digest.
 
+**Portal health, 2 Sep 2026: 16 of 56 portals return tenders**, up from 13 after
+seven wrong URLs in `sources.json` were repaired. Those seven had been failing
+DNS outright — `wbredda.org` was simply a typo for `wbreda.org` — and three of
+the replacements carry real tenders: Bihar REDA (`breda.co.in`, 6), West Bengal
+REDA (`wbreda.org`, 3) and Bhutan's agency (`www.moenr.gov.bt`, 1). Swapping
+Bhutan's e-tender portal to the official `www.egp.gov.bt` also takes ~40 seconds
+off every run.
+
+Of the 40 that still return nothing: 13 are captcha-gated GePNIC portals
+(unfixable from here), 3 return HTTP errors, 23 are read fine and simply had
+nothing matching that day, and one — `power.nagaland.gov.in` — still has no
+working URL and needs the real address from the tender spreadsheet.
+
 | Variable | Default | Purpose |
 |---|---|---|
 | `MAX_PORTAL_FETCHES` | `60` | Portal requests per run (sources.json holds 56) |
@@ -102,14 +141,17 @@ Four levels, cheapest first. Nothing below level 3 can reach an inbox.
 **1. Offline suite — no network, no API keys, no cost**
 
 ```bash
-python test_script.py     # 44 checks
-python test_tenders.py    # 57 checks
+python test_script.py     # 167 checks
+python test_tenders.py    # 115 checks
 ```
 
 Covers the normal path plus the failure modes: clustering failure, storage
 failure, dead feeds, no usable model, budget caps, meta-refresh stubs,
-captcha-gated portals, concurrent portal collection, and the state-scoped
-suppression key. Every case asserts a digest is still produced.
+captcha-gated portals, concurrent portal collection, the state-scoped
+suppression key, and every way summarising can fail — a rate limit, an empty
+model answer, an exhausted budget, `SUMMARY_ENABLED=0`. Every case asserts a
+digest is still produced, and every summary case asserts the story keeps a
+readable sentence.
 
 **2. Dry run against live feeds — real data, nothing sent**
 
@@ -123,7 +165,7 @@ prints the email body to stdout instead of sending it.
 
 Prints the exact email to stdout instead of sending it. `SKIP_SEEDING=1` is what
 makes this useful — without it an empty database just seeds and shows no news.
-`ONLY_SITES=3` keeps the rehearsal quick; drop it for the full 43.
+`ONLY_SITES=3` keeps the rehearsal quick; drop it for the full list.
 
 Watch for: `[MODELS] N available:` (which Groq models your key really has),
 `[FEED ERROR]` lines (broken URLs), and whether clustering merged what it should.
@@ -144,16 +186,42 @@ appears in the deploy logs. Remove the variable when you're satisfied.
 Feed URLs are checked separately. The two scripts answer different questions:
 
 ```bash
-python check_config_feeds.py         # are the 43 feeds we actually read alive?
+python check_config_feeds.py         # are the configured feeds alive?
 python check_config_feeds.py --write # repair moved URLs, set verified flags
 python verify_feeds.py               # do the 42 candidate publications have feeds?
 ```
 
 `check_config_feeds.py` re-probes every feed in `config.json`, and when one is
-dead goes looking for a working URL on the same domain before giving up. As of
-22 Aug 2026: 27 of 43 work, 4 URLs were repaired, and the remaining 16 are
-Cloudflare 403s, 404s, or paths that serve HTML rather than a feed. See
-`config_feed_report.md`.
+dead goes looking for a working URL on the same domain before giving up.
+
+Both scripts fetch the way `script.py` does, retrying a 403 with `curl_cffi`.
+That matters: without it the checker called 25 of 42 feeds dead while the
+tracker was reading 29 of them. A 429 is reported separately as "rate-limited,
+unproven" rather than dead, because probing one dead feed costs up to twenty
+requests to the same host and can trip a limit on a feed that works.
+
+The report separates three states, because only one of them is a repair job:
+
+- **dead** — no feed at the URL and none on the domain. Fix the URL.
+- **empty** — a well-formed feed carrying no items right now. The link is
+  correct and there is nothing to fix; an event site, or a publisher between
+  issues, looks exactly like this and may carry items tomorrow.
+- **rate-limited** — HTTP 429, no verdict on the feed at all. Re-run later.
+
+Only *dead* feeds get their URL rewritten or their `verified` flag cleared.
+
+As of 2 Sep 2026, measured through that path: **31 feeds configured — 29 carry
+items and 2 are empty** (India Energy Storage Week and Construction World, both
+serving valid RSS 2.0 with no items). The 11 that were broken have been dropped
+from `config.json`: 2 Cloudflare 403s (Renewable Energy World, Battery
+Industry), 3 404s (Energy Next, Power Engineering, Sustainability Magazine) and
+6 that served HTML rather than a feed. See `config_feed_report.md`, and
+`link_health.xlsx` for the full record of every non-working URL.
+
+None of the 11 was repairable by changing the URL, and that was checked
+exhaustively before dropping them — ~30 conventional paths each, re-swept with
+Chrome TLS impersonation, plus homepage autodiscovery. They are broken at the
+publisher, and nothing in the code can bring them back.
 
 ### Deduplication
 
