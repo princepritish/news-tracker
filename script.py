@@ -154,9 +154,10 @@ BODY_HEAD_CHARS = int(os.getenv("BODY_HEAD_CHARS", "1500"))
 # to return simply keeps its lede. Set SUMMARY_ENABLED=0 for lede-only.
 SUMMARY_ENABLED = os.getenv("SUMMARY_ENABLED", "1") == "1"
 SUMMARY_CHARS = int(os.getenv("SUMMARY_CHARS", "260"))
-# Stories per summarising call. Batching is what keeps this affordable: one call
-# per story would double the run's LLM usage and compete with state extraction,
-# which is the call that decides whether an article is news at all.
+# Stories per summarising call. Batching is what keeps this affordable: the
+# original summariser spent one call per article on this same model, and at
+# ~11 calls a minute on Groq's free tier that is the whole budget. Eight at a
+# time turns a day's digest into a handful of calls.
 SUMMARY_BATCH = int(os.getenv("SUMMARY_BATCH", "8"))
 # A hard ceiling of its own, on top of the shared budget, so a big news day
 # cannot spend the whole LLM allowance on polish.
@@ -813,12 +814,20 @@ def summarize_clusters(clusters):
     Runs after clustering deliberately - only the stories that actually reach the
     digest are summarised, which is the smallest number of calls that can do the
     job, and state extraction has already taken the budget it needs by then.
+
+    Uses FAST_MODEL (SUMMARY_MODEL), not the clustering model. That is what the
+    env var has always been named for, and the split is the original design:
+    per-article work goes to the small model, and the one-per-run clustering
+    call is what can afford the strong one. Sharing a quota with state
+    extraction is safe here precisely because this runs last - every feed has
+    been processed by the time the first summary is asked for - and if the
+    minute's tokens are already spent, the 429 costs polish and nothing else.
     """
     if not clusters:
         return clusters
 
     pending = [c for c in clusters if not c.get("summary_source_is_llm")]
-    if not SUMMARY_ENABLED or not STRONG_MODEL:
+    if not SUMMARY_ENABLED or not FAST_MODEL:
         # The run log is the only place this is visible, so say which of the two
         # it was: one is a setting, the other is a broken key or a retired model.
         why = "SUMMARY_ENABLED=0" if not SUMMARY_ENABLED else "no usable model"
@@ -854,7 +863,7 @@ Return ONLY JSON in this exact form, with a key for every index 0 to {len(batch)
 """
         try:
             response = client.chat.completions.create(
-                model=STRONG_MODEL,
+                model=FAST_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},
             )

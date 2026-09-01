@@ -164,8 +164,8 @@ One run, in order:
    happened. Two tiers, and the free one always runs first: `lede_summary`
    takes the article's own opening, from the feed description or from the body
    the run already scraped to find the state. `summarize_clusters` then rewrites
-   those with the model, in batches of `SUMMARY_BATCH`, and anything it does not
-   return keeps its lede.
+   those on `SUMMARY_MODEL`, in batches of `SUMMARY_BATCH`, and anything it does
+   not return keeps its lede.
 5. **Tenders and government notices** — always run; harvest links from each
    portal in parallel and keep those that read as procurement *or* as a notice
    (a tariff order, a net-metering circular, a policy amendment). The notices
@@ -225,6 +225,11 @@ One run, in order:
   (`gpt-oss-120b`) is one call a run on a separate quota and never binds.
 - **Scrape failures and budget exhaustion are deferred, not dropped** — counted
   in `budget.deferred` and left unmarked so the next run retries them.
+- **Summarising belongs to `SUMMARY_MODEL`, not `CLUSTER_MODEL`.** The split is
+  the original design and the variable names say so: per-article work goes to
+  the small model, and the single once-per-run clustering call is the only one
+  that can afford the strong one. Sharing a quota with state extraction is safe
+  because summarising runs last, once every feed has been processed.
 - **A summary is never allowed to cost a story.** Every cluster carries its
   `lede_summary` before the model is asked anything, so a 429, bad JSON, a
   dropped index, an empty string or `SUMMARY_ENABLED=0` all leave a real

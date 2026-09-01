@@ -67,11 +67,17 @@ publisher's own truncation marker. The model then rewrites those into one clean
 sentence per story — in batches, after clustering, so only stories that will
 actually be sent are paid for.
 
+Summarising uses **`SUMMARY_MODEL`** — the same model the per-article calls
+have always used, and what the variable is named for. `CLUSTER_MODEL` stays
+reserved for the one-per-run grouping call, which is the only call that can
+afford a stronger model.
+
 **The model tier can fail without costing you anything.** A rate limit, bad
 JSON, a dead key or `SUMMARY_ENABLED=0` all leave the extracted lede in place;
 no story ever loses its summary, and none is ever dropped or reordered by
-summarising. Summaries also yield to the LLM budget, because state extraction
-decides whether an article is news at all and must not be starved by polish.
+summarising. Summaries also yield to the LLM budget, and they run last — after
+every feed has been processed — so they cannot starve the state extraction that
+decides whether an article is news at all.
 
 | Variable | Default | Purpose |
 |---|---|---|
